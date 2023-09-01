@@ -59,6 +59,7 @@ impl Point {
 /// Operations and values needed by all curve operations.
 pub struct CommonOps {
     pub num_limbs: usize,
+    pub order_bits: usize,
     q: Modulus,
     pub n: Elem<Unencoded>,
 
@@ -74,7 +75,7 @@ pub struct CommonOps {
 
 impl CommonOps {
     fn order_bits(&self) -> BitLength {
-        BitLength::from_usize_bits(self.num_limbs * LIMB_BITS)
+        BitLength::from_usize_bits(self.order_bits)
     }
 
     #[inline]
@@ -270,7 +271,7 @@ impl PublicKeyOps {
     // implements NIST SP 800-56A Step 2: "Verify that xQ and yQ are integers
     // in the interval [0, p-1] in the case that q is an odd prime p[.]"
     pub fn elem_parse(&self, input: &mut untrusted::Reader) -> Result<Elem<R>, error::Unspecified> {
-        let encoded_value = input.read_bytes(self.common.num_limbs * LIMB_BYTES)?;
+        let encoded_value = input.read_bytes((self.common.order_bits + 7) / 8)?;
         let parsed = elem_parse_big_endian_fixed_consttime(self.common, encoded_value)?;
         let mut r = Elem::zero();
         // Montgomery encode (elem_to_mont).
@@ -298,7 +299,7 @@ pub struct ScalarOps {
 impl ScalarOps {
     // The (maximum) length of a scalar, not including any padding.
     pub fn scalar_bytes_len(&self) -> usize {
-        self.common.num_limbs * LIMB_BYTES
+        (self.common.order_bits + 7) / 8
     }
 
     /// Returns the modular inverse of `a` (mod `n`). Panics of `a` is zero,
@@ -456,7 +457,7 @@ fn parse_big_endian_fixed_consttime<M>(
     allow_zero: AllowZero,
     max_exclusive: &[Limb],
 ) -> Result<elem::Elem<M, Unencoded>, error::Unspecified> {
-    if bytes.len() != ops.num_limbs * LIMB_BYTES {
+    if bytes.len() != (ops.order_bits + 7) / 8 {
         return Err(error::Unspecified);
     }
     let mut r = elem::Elem::zero();
@@ -1259,4 +1260,5 @@ mod tests {
 mod elem;
 pub mod p256;
 pub mod p384;
+pub mod p521;
 mod vartime;

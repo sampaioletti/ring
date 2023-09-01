@@ -58,13 +58,26 @@ pub(crate) fn digest_bytes_scalar(ops: &ScalarOps, digest: &[u8]) -> Scalar {
 // This is a separate function solely so that we can test specific digest
 // values like all-zero values and values larger than `n`.
 fn digest_scalar_(ops: &ScalarOps, digest: &[u8]) -> Scalar {
+    let mut digest_shift = [0u8; MAX_LIMBS * LIMB_BYTES];
     let cops = ops.common;
-    let num_limbs = cops.num_limbs;
-    let digest = if digest.len() > num_limbs * LIMB_BYTES {
-        &digest[..(num_limbs * LIMB_BYTES)]
+    let num_bytes = (cops.order_bits + 7) / 8;
+    let mut digest = if digest.len() > num_bytes {
+        &digest[..num_bytes]
     } else {
         digest
     };
+
+    let shift = (digest.len() * 8).saturating_sub(cops.order_bits);
+    if shift > 0 {
+        debug_assert!(shift < 8);
+        // If the digest is too long after byte trancation
+        // shift right to get the proper number of bits
+        digest_shift[0] = digest[0] >> shift;
+        for i in 1..num_bytes {
+            digest_shift[i] = digest[i] >> shift | digest[i - 1] << (8 - shift);
+        }
+        digest = &digest_shift[..num_bytes];
+    }
 
     scalar_parse_big_endian_partially_reduced_variable_consttime(
         cops,

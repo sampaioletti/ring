@@ -27,7 +27,7 @@
 #pragma GCC diagnostic ignored "-Wsign-conversion"
 #endif
 
-#define RENAME_FUNC(bits, func) nistz ## bits ## _ ## func
+#define RENAME_FUNC(bits, func) p ## bits ## _ ## func
 
 #define point_add(bits) RENAME_FUNC(bits, point_add)
 #define point_double(bits) RENAME_FUNC(bits, point_double)
@@ -362,7 +362,7 @@ void point_mul(BITS)(NIST_POINT *r, const BN_ULONG p_scalar[FE_LIMBS],
   }
 
   static const size_t ROUND_SIZE = (BITS + W_BITS - 1) / W_BITS * W_BITS;
-  static const size_t START_INDEX = ROUND_SIZE == BITS + 1 ? ROUND_SIZE - W_BITS: ROUND_SIZE;
+  size_t START_INDEX = ROUND_SIZE == BITS + 1 ? ROUND_SIZE - W_BITS: ROUND_SIZE;
   size_t index = START_INDEX;
 
   BN_ULONG recoded_is_negative;
