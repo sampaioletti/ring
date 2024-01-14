@@ -50,7 +50,7 @@ where
         length.into()
     };
 
-    output.write_byte(tag as u8);
+    output.write_byte(tag.into());
     if length < 0x80 {
         output.write_byte(length as u8);
     } else if length < 0x1_00 {

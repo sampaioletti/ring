@@ -69,9 +69,10 @@
     clippy::fn_to_numeric_cast_any,
     clippy::fn_to_numeric_cast_with_truncation,
     clippy::ptr_cast_constness,
-    clippy::transmute_ptr_to_ptr,
+    clippy::transmute_ptr_to_ptr
 )]
 #![warn(
+    clippy::as_conversions,
     clippy::checked_conversions,
     clippy::unnecessary_cast,
     clippy::cast_lossless,
@@ -79,7 +80,7 @@
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::ptr_as_ptr,
+    clippy::ptr_as_ptr
 )]
 #![no_std]
 
