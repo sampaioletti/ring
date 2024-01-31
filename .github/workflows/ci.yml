@@ -160,7 +160,7 @@ jobs:
           - x86_64-unknown-linux-gnu
 
         mode:
-          - # debug
+          # `coverage` jobs build in debug mode, so only run in release mode here.
           - --release
 
         rust_channel:
@@ -527,6 +527,7 @@ jobs:
           - x86_64-unknown-linux-musl      # Has assembly
 
         mode:
+          # This is the main coverage we have for debug mode builds.
           - # debug
 
         # Coverage collection is Nightly-only
