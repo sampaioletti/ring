@@ -167,9 +167,11 @@ jobs:
           - stable
           # Keep in sync with Cargo.toml and similar `rust_channel` sections.
           - 1.61.0 # MSRV
-          # TODO: Move these to a daily/pre-release job.
+          # Early warning for changes in the Rust toolchain that are about to
+          # break builds on Rust Stable.
+          - beta
+          # XXX: `coverage` jobs run on Nightly.
           # - nightly
-          # - beta
 
         include:
           - target: aarch64-apple-darwin
@@ -532,6 +534,7 @@ jobs:
 
         # Coverage collection is Nightly-only
         rust_channel:
+          # This is the main coverage we have for building with Rust Nightly.
           - nightly
 
         # TODO: targets
