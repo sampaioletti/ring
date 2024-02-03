@@ -138,6 +138,16 @@ jobs:
         features:
           - # Default
 
+        rust_channel:
+          - stable
+          # Keep in sync with Cargo.toml and similar `rust_channel` sections.
+          - 1.61.0 # MSRV
+          # Early warning for changes in the Rust toolchain that are about to
+          # break builds on Rust Stable.
+          - beta
+          # XXX: `coverage` jobs run on Nightly.
+          # - nightly
+
         target:
           - aarch64-apple-ios
           - aarch64-apple-darwin
@@ -162,16 +172,6 @@ jobs:
         mode:
           # `coverage` jobs build in debug mode, so only run in release mode here.
           - --release
-
-        rust_channel:
-          - stable
-          # Keep in sync with Cargo.toml and similar `rust_channel` sections.
-          - 1.61.0 # MSRV
-          # Early warning for changes in the Rust toolchain that are about to
-          # break builds on Rust Stable.
-          - beta
-          # XXX: `coverage` jobs run on Nightly.
-          # - nightly
 
         include:
           - target: aarch64-apple-darwin
@@ -372,6 +372,12 @@ jobs:
           - --no-default-features
           - --features=std,slow_tests
 
+        rust_channel:
+          - stable
+          - nightly
+          # Keep in sync with Cargo.toml and similar `rust_channel` sections.
+          - 1.61.0 # MSRV
+
         target:
           - aarch64-unknown-linux-musl
           - i686-pc-windows-msvc
@@ -379,12 +385,6 @@ jobs:
 
         mode:
           - --release
-
-        rust_channel:
-          - stable
-          - nightly
-          # Keep in sync with Cargo.toml and similar `rust_channel` sections.
-          - 1.61.0 # MSRV
 
         include:
           - target: aarch64-unknown-linux-musl
@@ -459,15 +459,19 @@ jobs:
 
         host_os:
           - ubuntu-22.04
-        mode:
-          - # debug
-          - --release
+
         rust_channel:
           - stable
           - beta
           - nightly
+
+        mode:
+          - # debug
+          - --release
+
         target:
           - wasm32-unknown-unknown
+
         webdriver:
           # TODO: Firefox is not in Ubuntu 22.04 images according to
           # https://github.com/actions/runner-images/issues/5490 and our
@@ -515,6 +519,11 @@ jobs:
           # to be covered without it being enabled.
           - --features=std
 
+        # Coverage collection is Nightly-only
+        rust_channel:
+          # This is the main coverage we have for building with Rust Nightly.
+          - nightly
+
         # TODO: targets
         target:
           - aarch64-unknown-linux-gnu      # Has assembly
@@ -531,11 +540,6 @@ jobs:
         mode:
           # This is the main coverage we have for debug mode builds.
           - # debug
-
-        # Coverage collection is Nightly-only
-        rust_channel:
-          # This is the main coverage we have for building with Rust Nightly.
-          - nightly
 
         # TODO: targets
         include:
