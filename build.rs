@@ -288,11 +288,6 @@ fn main() {
     }
 }
 
-enum GeneratedSources {
-    UsePregenerated { pregenerated_root: PathBuf },
-    GenerateOnDemand { perl_exe: PathBuf },
-}
-
 fn ring_build_rs_main() {
     use std::env;
 
@@ -319,14 +314,13 @@ fn ring_build_rs_main() {
     // If `.git` doesn't exist then assume that this is a packaged build where
     // we want to optimize for minimizing the build tools required: No Perl,
     // no nasm, etc.
-    let generated_sources = if !is_git {
-        let pregenerated_root =
+    let (use_preassembled_if_available, generated_dir) = if !is_git {
+        let generated_dir =
             PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join(PREGENERATED);
-        GeneratedSources::UsePregenerated { pregenerated_root }
+        (true, generated_dir)
     } else {
-        GeneratedSources::GenerateOnDemand {
-            perl_exe: get_perl_exe(),
-        }
+        generate_sources(&out_dir);
+        (false, out_dir.clone())
     };
 
     // During local development, force warnings in non-Rust code to be treated
@@ -343,17 +337,25 @@ fn ring_build_rs_main() {
         force_warnings_into_errors,
     };
 
-    build_c_code(&target, generated_sources, &out_dir, &ring_core_prefix());
+    build_c_code(
+        &target,
+        use_preassembled_if_available,
+        &generated_dir,
+        &out_dir,
+        &ring_core_prefix(),
+    );
     emit_rerun_if_changed()
 }
 
 fn pregenerate_asm_main() {
     println!("cargo:rustc-cfg=pregenerate_asm_only");
-
     let pregenerated = PathBuf::from(PREGENERATED);
     std::fs::create_dir(&pregenerated).unwrap();
+    generate_sources(&pregenerated);
+}
 
-    generate_prefix_symbols_headers(&pregenerated, &ring_core_prefix()).unwrap();
+fn generate_sources(out_dir: &Path) {
+    generate_prefix_symbols_headers(out_dir, &ring_core_prefix()).unwrap();
 
     let perl_exe = get_perl_exe();
 
@@ -362,7 +364,7 @@ fn pregenerate_asm_main() {
         // pregenerated assembly language source files, so that the user
         // doesn't need to install the assembler.
 
-        let perlasm_src_dsts = perlasm_src_dsts(&pregenerated, asm_target);
+        let perlasm_src_dsts = perlasm_src_dsts(out_dir, asm_target);
         perlasm(&perl_exe, &perlasm_src_dsts, asm_target);
 
         if asm_target.preassemble {
@@ -380,9 +382,9 @@ fn pregenerate_asm_main() {
                 force_warnings_into_errors: true,
             };
 
-            let b = new_build(&target, &pregenerated);
+            let b = new_build(&target, out_dir);
             for src in srcs {
-                win_asm(&b, &src, &target, &pregenerated, &pregenerated);
+                win_asm(&b, &src, &target, out_dir, out_dir);
             }
         }
     }
@@ -406,7 +408,8 @@ struct Target {
 
 fn build_c_code(
     target: &Target,
-    generated_sources: GeneratedSources,
+    use_preassembled_if_available: bool,
+    generated_dir: &Path,
     out_dir: &Path,
     ring_core_prefix: &str,
 ) {
@@ -416,39 +419,21 @@ fn build_c_code(
         asm_target.arch == target.arch && asm_target.oss.contains(&target.os.as_ref())
     });
 
-    let generated_dir = match &generated_sources {
-        GeneratedSources::UsePregenerated { pregenerated_root } => pregenerated_root,
-        GeneratedSources::GenerateOnDemand { .. } => {
-            generate_prefix_symbols_headers(out_dir, ring_core_prefix).unwrap();
-            out_dir
-        }
-    };
-
     let (asm_srcs, obj_srcs) = if let Some(asm_target) = asm_target {
         let perlasm_src_dsts = perlasm_src_dsts(generated_dir, asm_target);
-
-        match &generated_sources {
-            GeneratedSources::UsePregenerated { .. } => {} // Do nothing
-            GeneratedSources::GenerateOnDemand { perl_exe } => {
-                perlasm(perl_exe, &perlasm_src_dsts[..], asm_target);
-            }
-        }
 
         let asm_srcs = asm_srcs(perlasm_src_dsts);
 
         // For Windows we also pregenerate the object files for non-Git builds so
         // the user doesn't need to install the assembler.
-        match &generated_sources {
-            GeneratedSources::UsePregenerated { pregenerated_root }
-                if target.os == WINDOWS && asm_target.preassemble =>
-            {
-                let obj_srcs = asm_srcs
-                    .iter()
-                    .map(|src| obj_path(pregenerated_root, src.as_path()))
-                    .collect::<Vec<_>>();
-                (vec![], obj_srcs)
-            }
-            _ => (asm_srcs, vec![]),
+        if use_preassembled_if_available && target.os == WINDOWS && asm_target.preassemble {
+            let obj_srcs = asm_srcs
+                .iter()
+                .map(|src| obj_path(generated_dir, src.as_path()))
+                .collect::<Vec<_>>();
+            (vec![], obj_srcs)
+        } else {
+            (asm_srcs, vec![])
         }
     } else {
         (vec![], vec![])
