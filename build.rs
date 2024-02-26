@@ -159,63 +159,54 @@ const ASM_TARGETS: &[AsmTarget] = &[
         arch: AARCH64,
         perlasm_format: "linux64",
         asm_extension: "S",
-        preassemble: false,
     },
     AsmTarget {
         oss: LINUX_ABI,
         arch: ARM,
         perlasm_format: "linux32",
         asm_extension: "S",
-        preassemble: false,
     },
     AsmTarget {
         oss: LINUX_ABI,
         arch: X86,
         perlasm_format: "elf",
         asm_extension: "S",
-        preassemble: false,
     },
     AsmTarget {
         oss: LINUX_ABI,
         arch: X86_64,
         perlasm_format: "elf",
         asm_extension: "S",
-        preassemble: false,
     },
     AsmTarget {
         oss: MACOS_ABI,
         arch: AARCH64,
         perlasm_format: "ios64",
         asm_extension: "S",
-        preassemble: false,
     },
     AsmTarget {
         oss: MACOS_ABI,
         arch: X86_64,
         perlasm_format: "macosx",
         asm_extension: "S",
-        preassemble: false,
     },
     AsmTarget {
         oss: &[WINDOWS],
         arch: X86,
-        perlasm_format: "win32n",
+        perlasm_format: WIN32N,
         asm_extension: "asm",
-        preassemble: true,
     },
     AsmTarget {
         oss: &[WINDOWS],
         arch: X86_64,
-        perlasm_format: "nasm",
+        perlasm_format: NASM,
         asm_extension: "asm",
-        preassemble: true,
     },
     AsmTarget {
         oss: &[WINDOWS],
         arch: AARCH64,
         perlasm_format: "win64",
         asm_extension: "S",
-        preassemble: false,
     },
 ];
 
@@ -231,14 +222,21 @@ struct AsmTarget {
 
     /// The filename extension for assembly files.
     asm_extension: &'static str,
+}
 
+impl AsmTarget {
     /// Whether pre-assembled object files should be included in the Cargo
     /// package instead of the asm sources. This way, the user doesn't need
     /// to install an assembler for the target. This is particularly important
     /// for x86/x86_64 Windows since an assembler doesn't come with the C
     /// compiler.
-    preassemble: bool,
+    fn preassemble(&self) -> bool {
+        [WIN32N, NASM].contains(&self.perlasm_format)
+    }
 }
+
+const WIN32N: &str = "win32n";
+const NASM: &str = "nasm";
 
 /// Operating systems that have the same ABI as Linux on every architecture
 /// mentioned in `ASM_TARGETS`.
@@ -367,7 +365,7 @@ fn generate_sources(out_dir: &Path) {
         let perlasm_src_dsts = perlasm_src_dsts(out_dir, asm_target);
         perlasm(&perl_exe, &perlasm_src_dsts, asm_target);
 
-        if asm_target.preassemble {
+        if asm_target.preassemble() {
             // Preassembly is currently only done for Windows targets.
             assert_eq!(&asm_target.oss, &[WINDOWS]);
             let os = WINDOWS;
@@ -426,7 +424,7 @@ fn build_c_code(
 
         // For Windows we also pregenerate the object files for non-Git builds so
         // the user doesn't need to install the assembler.
-        if use_preassembled_if_available && target.os == WINDOWS && asm_target.preassemble {
+        if use_preassembled_if_available && asm_target.preassemble() {
             let obj_srcs = asm_srcs
                 .iter()
                 .map(|src| obj_path(generated_dir, src.as_path()))
