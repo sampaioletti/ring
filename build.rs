@@ -304,23 +304,6 @@ fn ring_build_rs_main() {
     // Published builds are always built in release mode.
     let is_debug = is_git && env::var("DEBUG").unwrap() != "false";
 
-    // If `.git` exists then assume this is the "local hacking" case where
-    // we want to make it easy to build *ring* using `cargo build`/`cargo test`
-    // without a prerequisite `package` step, at the cost of needing additional
-    // tools like `Perl` and/or `nasm`.
-    //
-    // If `.git` doesn't exist then assume that this is a packaged build where
-    // we want to optimize for minimizing the build tools required: No Perl,
-    // no nasm, etc.
-    let (use_preassembled_if_available, generated_dir) = if !is_git {
-        let generated_dir =
-            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join(PREGENERATED);
-        (true, generated_dir)
-    } else {
-        generate_sources(&out_dir);
-        (false, out_dir.clone())
-    };
-
     // During local development, force warnings in non-Rust code to be treated
     // as errors. Since warnings are highly compiler-dependent and compilers
     // don't maintain backward compatibility w.r.t. which warnings they issue,
@@ -335,7 +318,29 @@ fn ring_build_rs_main() {
         force_warnings_into_errors,
     };
 
+    let asm_target = ASM_TARGETS.iter().find(|asm_target| {
+        asm_target.arch == target.arch && asm_target.oss.contains(&target.os.as_ref())
+    });
+
+    // If `.git` exists then assume this is the "local hacking" case where
+    // we want to make it easy to build *ring* using `cargo build`/`cargo test`
+    // without a prerequisite `package` step, at the cost of needing additional
+    // tools like `Perl` and/or `nasm`.
+    //
+    // If `.git` doesn't exist then assume that this is a packaged build where
+    // we want to optimize for minimizing the build tools required: No Perl,
+    // no nasm, etc.
+    let (use_preassembled_if_available, generated_dir) = if !is_git {
+        let generated_dir =
+            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join(PREGENERATED);
+        (true, generated_dir)
+    } else {
+        generate_sources(&out_dir, asm_target.into_iter());
+        (false, out_dir.clone())
+    };
+
     build_c_code(
+        asm_target,
         &target,
         use_preassembled_if_available,
         &generated_dir,
@@ -349,15 +354,15 @@ fn pregenerate_asm_main() {
     println!("cargo:rustc-cfg=pregenerate_asm_only");
     let pregenerated = PathBuf::from(PREGENERATED);
     std::fs::create_dir(&pregenerated).unwrap();
-    generate_sources(&pregenerated);
+    generate_sources(&pregenerated, ASM_TARGETS.iter());
 }
 
-fn generate_sources(out_dir: &Path) {
+fn generate_sources<'a>(out_dir: &Path, asm_targets: impl Iterator<Item = &'a AsmTarget>) {
     generate_prefix_symbols_headers(out_dir, &ring_core_prefix()).unwrap();
 
     let perl_exe = get_perl_exe();
 
-    for asm_target in ASM_TARGETS {
+    for asm_target in asm_targets {
         // For Windows, package pregenerated object files in addition to
         // pregenerated assembly language source files, so that the user
         // doesn't need to install the assembler.
@@ -405,6 +410,7 @@ struct Target {
 }
 
 fn build_c_code(
+    asm_target: Option<&AsmTarget>,
     target: &Target,
     use_preassembled_if_available: bool,
     generated_dir: &Path,
@@ -412,10 +418,6 @@ fn build_c_code(
     ring_core_prefix: &str,
 ) {
     println!("cargo:rustc-env=RING_CORE_PREFIX={}", ring_core_prefix);
-
-    let asm_target = ASM_TARGETS.iter().find(|asm_target| {
-        asm_target.arch == target.arch && asm_target.oss.contains(&target.os.as_ref())
-    });
 
     let (asm_srcs, obj_srcs) = if let Some(asm_target) = asm_target {
         let perlasm_src_dsts = perlasm_src_dsts(generated_dir, asm_target);
