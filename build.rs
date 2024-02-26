@@ -330,19 +330,16 @@ fn ring_build_rs_main() {
     // If `.git` doesn't exist then assume that this is a packaged build where
     // we want to optimize for minimizing the build tools required: No Perl,
     // no nasm, etc.
-    let (use_preassembled_if_available, generated_dir) = if !is_git {
-        let generated_dir =
-            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join(PREGENERATED);
-        (true, generated_dir)
+    let generated_dir = if !is_git {
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join(PREGENERATED)
     } else {
         generate_sources(&out_dir, asm_target.into_iter());
-        (false, out_dir.clone())
+        out_dir.clone()
     };
 
     build_c_code(
         asm_target,
         &target,
-        use_preassembled_if_available,
         &generated_dir,
         &out_dir,
         &ring_core_prefix(),
@@ -373,21 +370,11 @@ fn generate_sources<'a>(out_dir: &Path, asm_targets: impl Iterator<Item = &'a As
         if asm_target.preassemble() {
             // Preassembly is currently only done for Windows targets.
             assert_eq!(&asm_target.oss, &[WINDOWS]);
-            let os = WINDOWS;
 
             let srcs = asm_srcs(perlasm_src_dsts);
 
-            let target = Target {
-                arch: asm_target.arch.to_owned(),
-                os: os.to_owned(),
-                is_musl: false,
-                is_debug: false,
-                force_warnings_into_errors: true,
-            };
-
-            let b = new_build(&target, out_dir);
             for src in srcs {
-                win_asm(&b, &src, &target, out_dir, out_dir);
+                nasm(&src, asm_target.arch, out_dir, out_dir);
             }
         }
     }
@@ -412,7 +399,6 @@ struct Target {
 fn build_c_code(
     asm_target: Option<&AsmTarget>,
     target: &Target,
-    use_preassembled_if_available: bool,
     generated_dir: &Path,
     out_dir: &Path,
     ring_core_prefix: &str,
@@ -426,7 +412,7 @@ fn build_c_code(
 
         // For Windows we also pregenerate the object files for non-Git builds so
         // the user doesn't need to install the assembler.
-        if use_preassembled_if_available && asm_target.preassemble() {
+        if asm_target.preassemble() {
             let obj_srcs = asm_srcs
                 .iter()
                 .map(|src| obj_path(generated_dir, src.as_path()))
@@ -500,10 +486,10 @@ fn build_library<'a>(
         // XXX: `b.file(p)` isn't enough to assemble an '.S' with clang on aarch64-pc-windows-msvc
         // presumably due to a bug in cc-rs; it doesn't pass clang `-c` like it does for other
         // targets.
-        if target.os != WINDOWS || !matches!(src.extension(), Some(e) if e == "S" || e == "asm") {
+        if target.os != WINDOWS || !matches!(src.extension(), Some(e) if e == "S") {
             c.file(src);
         } else {
-            let obj = win_asm(&c, src, target, out_dir, out_dir);
+            let obj = cc_asm(&c, src, out_dir);
             c.object(obj);
         }
     });
@@ -528,25 +514,6 @@ fn build_library<'a>(
     // Link the library. This works even when the library doesn't need to be
     // rebuilt.
     println!("cargo:rustc-link-lib=static={}", lib_name);
-}
-
-fn win_asm(
-    b: &cc::Build,
-    p: &Path,
-    target: &Target,
-    include_dir: &Path,
-    out_dir: &Path,
-) -> PathBuf {
-    let ext = p.extension().unwrap().to_str().unwrap();
-    let out_file = obj_path(out_dir, p);
-    let cmd = if target.os != WINDOWS || ext != "asm" {
-        cc_asm(b, p, &out_file)
-    } else {
-        nasm(p, &target.arch, include_dir, &out_file)
-    };
-
-    run_command(cmd);
-    out_file
 }
 
 fn obj_path(out_dir: &Path, src: &Path) -> PathBuf {
@@ -604,18 +571,21 @@ fn configure_cc(c: &mut cc::Build, target: &Target, include_dir: &Path) {
 
 /// Assembles the assemply language source `file` into the object file
 /// `out_file`.
-fn cc_asm(b: &cc::Build, file: &Path, out_file: &Path) -> Command {
+fn cc_asm(b: &cc::Build, file: &Path, out_dir: &Path) -> PathBuf {
+    let out_file = obj_path(out_dir, file);
     let cc = b.get_compiler();
     let obj_opt = if cc.is_like_msvc() { "/Fo" } else { "-o" };
     let mut arg = OsString::from(obj_opt);
-    arg.push(out_file);
+    arg.push(&out_file);
 
     let mut c = cc.to_command();
     let _ = c.arg("-c").arg(arg).arg(file);
-    c
+    run_command(c);
+    out_file
 }
 
-fn nasm(file: &Path, arch: &str, include_dir: &Path, out_file: &Path) -> Command {
+fn nasm(file: &Path, arch: &str, include_dir: &Path, out_dir: &Path) {
+    let out_file = obj_path(out_dir, file);
     let oformat = match arch {
         x if x == X86_64 => "win64",
         x if x == X86 => "win32",
@@ -641,7 +611,7 @@ fn nasm(file: &Path, arch: &str, include_dir: &Path, out_file: &Path) -> Command
         .arg("-Xgnu")
         .arg("-gcv8")
         .arg(file);
-    c
+    run_command(c);
 }
 
 fn run_command_with_args(command_name: &Path, args: &[String]) {
