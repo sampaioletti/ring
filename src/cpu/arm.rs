@@ -52,12 +52,6 @@ mod abi_assumptions {
 fn detect_features() -> u32 {
     use libc::c_ulong;
 
-    // XXX: The `libc` crate doesn't provide `libc::getauxval` consistently
-    // across all Android/Linux targets, e.g. musl.
-    extern "C" {
-        fn getauxval(type_: c_ulong) -> c_ulong;
-    }
-
     const AT_HWCAP: c_ulong = 16;
 
     #[cfg(target_arch = "aarch64")]
@@ -66,7 +60,7 @@ fn detect_features() -> u32 {
     #[cfg(target_arch = "arm")]
     const HWCAP_NEON: c_ulong = 1 << 12;
 
-    let caps = unsafe { getauxval(AT_HWCAP) };
+    let caps = unsafe { libc::getauxval(AT_HWCAP) };
 
     // We assume NEON is available on AARCH64 because it is a required
     // feature.
