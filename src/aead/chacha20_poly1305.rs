@@ -17,23 +17,10 @@ use super::{
     poly1305, Aad, Nonce, Tag,
 };
 use crate::{
-    aead, cpu, error,
+    cpu, error,
     polyfill::{u64_from_usize, usize_from_u64_saturated, ArrayFlatten},
 };
 use core::ops::RangeFrom;
-
-/// ChaCha20-Poly1305 as described in [RFC 8439].
-///
-/// The keys are 256 bits long and the nonces are 96 bits long.
-///
-/// [RFC 8439]: https://tools.ietf.org/html/rfc8439
-pub static CHACHA20_POLY1305: aead::Algorithm = aead::Algorithm {
-    key_len: Key::LEN,
-    init: chacha20_poly1305_init,
-    seal: chacha20_poly1305_seal,
-    open: chacha20_poly1305_open,
-    id: aead::AlgorithmID::CHACHA20_POLY1305,
-};
 
 const MAX_IN_OUT_LEN: usize = super::max_input_len(64, 1);
 // https://tools.ietf.org/html/rfc8439#section-2.8
@@ -50,27 +37,21 @@ impl Key {
 }
 
 /// Copies |key| into |ctx_buf|.
-fn chacha20_poly1305_init(
-    key: &[u8],
-    _cpu_features: cpu::Features,
-) -> Result<aead::KeyInner, error::Unspecified> {
+pub(super) fn init(key: &[u8], _cpu_features: cpu::Features) -> Result<Key, error::Unspecified> {
     let key: [u8; Key::LEN] = key.try_into()?;
-    Ok(aead::KeyInner::ChaCha20Poly1305(Key {
+    Ok(Key {
         chacha20_key: chacha::Key::new(key),
-    }))
+    })
 }
 
-fn chacha20_poly1305_seal(
-    key: &aead::KeyInner,
+pub(super) fn seal(
+    key: &Key,
     nonce: Nonce,
     aad: Aad<&[u8]>,
     in_out: &mut [u8],
     cpu_features: cpu::Features,
 ) -> Result<Tag, error::Unspecified> {
-    let chacha20_key = match key {
-        aead::KeyInner::ChaCha20Poly1305(Key { chacha20_key }) => chacha20_key,
-        _ => unreachable!(),
-    };
+    let Key { chacha20_key } = key;
 
     if in_out.len() > MAX_IN_OUT_LEN {
         return Err(error::Unspecified);
@@ -147,18 +128,15 @@ fn chacha20_poly1305_seal(
     Ok(finish(auth, aad.as_ref().len(), in_out.len()))
 }
 
-fn chacha20_poly1305_open(
-    key: &aead::KeyInner,
+pub(super) fn open(
+    key: &Key,
     nonce: Nonce,
     aad: Aad<&[u8]>,
     in_out: &mut [u8],
     src: RangeFrom<usize>,
     cpu_features: cpu::Features,
 ) -> Result<Tag, error::Unspecified> {
-    let chacha20_key = match key {
-        aead::KeyInner::ChaCha20Poly1305(Key { chacha20_key }) => chacha20_key,
-        _ => unreachable!(),
-    };
+    let Key { chacha20_key } = key;
 
     let unprefixed_len = in_out
         .len()
