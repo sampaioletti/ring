@@ -28,7 +28,7 @@ use core::ops::RangeFrom;
 ///
 /// [RFC 8439]: https://tools.ietf.org/html/rfc8439
 pub static CHACHA20_POLY1305: aead::Algorithm = aead::Algorithm {
-    key_len: chacha::KEY_LEN,
+    key_len: Key::LEN,
     init: chacha20_poly1305_init,
     seal: chacha20_poly1305_seal,
     open: chacha20_poly1305_open,
@@ -40,13 +40,24 @@ const MAX_IN_OUT_LEN: usize = super::max_input_len(64, 1);
 const _MAX_IN_OUT_LEN_BOUNDED_BY_RFC: () =
     assert!(MAX_IN_OUT_LEN == usize_from_u64_saturated(274_877_906_880u64));
 
+#[derive(Clone)]
+pub struct Key {
+    chacha20_key: chacha::Key,
+}
+
+impl Key {
+    const LEN: usize = chacha::KEY_LEN;
+}
+
 /// Copies |key| into |ctx_buf|.
 fn chacha20_poly1305_init(
     key: &[u8],
     _cpu_features: cpu::Features,
 ) -> Result<aead::KeyInner, error::Unspecified> {
-    let key: [u8; chacha::KEY_LEN] = key.try_into()?;
-    Ok(aead::KeyInner::ChaCha20Poly1305(chacha::Key::new(key)))
+    let key: [u8; Key::LEN] = key.try_into()?;
+    Ok(aead::KeyInner::ChaCha20Poly1305(Key {
+        chacha20_key: chacha::Key::new(key),
+    }))
 }
 
 fn chacha20_poly1305_seal(
@@ -57,7 +68,7 @@ fn chacha20_poly1305_seal(
     cpu_features: cpu::Features,
 ) -> Result<Tag, error::Unspecified> {
     let chacha20_key = match key {
-        aead::KeyInner::ChaCha20Poly1305(key) => key,
+        aead::KeyInner::ChaCha20Poly1305(Key { chacha20_key }) => chacha20_key,
         _ => unreachable!(),
     };
 
@@ -145,7 +156,7 @@ fn chacha20_poly1305_open(
     cpu_features: cpu::Features,
 ) -> Result<Tag, error::Unspecified> {
     let chacha20_key = match key {
-        aead::KeyInner::ChaCha20Poly1305(key) => key,
+        aead::KeyInner::ChaCha20Poly1305(Key { chacha20_key }) => chacha20_key,
         _ => unreachable!(),
     };
 
@@ -246,8 +257,6 @@ fn finish(mut auth: poly1305::Context, aad_len: usize, in_out_len: usize) -> Tag
     auth.update(&block.array_flatten());
     auth.finish()
 }
-
-pub type Key = chacha::Key;
 
 // Keep in sync with BoringSSL's `chacha20_poly1305_open_data` and
 // `chacha20_poly1305_seal_data`.
