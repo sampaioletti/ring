@@ -348,7 +348,7 @@ jobs:
     steps:
       - run: sudo apt-get update -y
 
-      - run: rustup toolchain add --profile=minimal ${{ matrix.rust_channel }}
+      - run: rustup toolchain install --profile=minimal ${{ matrix.rust_channel }}
 
       - uses: briansmith/actions-checkout@v4
         with:
