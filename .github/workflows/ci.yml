@@ -307,7 +307,7 @@ jobs:
 
       - if: ${{ (matrix.target != 'aarch64-apple-ios' || matrix.rust_channel != '1.61.0') &&
                 !contains(matrix.host_os, 'windows') }}
-        run: rustup toolchain install --component=llvm-tools-preview ${{ matrix.rust_channel }}
+        run: rustup toolchain install --no-self-update --component=llvm-tools-preview ${{ matrix.rust_channel }}
 
       - if: ${{ (matrix.target != 'aarch64-apple-ios' || matrix.rust_channel != '1.61.0') &&
                 !contains(matrix.host_os, 'windows') }}
@@ -348,7 +348,7 @@ jobs:
     steps:
       - run: sudo apt-get update -y
 
-      - run: rustup toolchain install --profile=minimal ${{ matrix.rust_channel }}
+      - run: rustup toolchain install --no-self-update --profile=minimal ${{ matrix.rust_channel }}
 
       - uses: briansmith/actions-checkout@v4
         with:
@@ -437,7 +437,7 @@ jobs:
 
       - if: ${{ (matrix.target != 'aarch64-apple-ios' || matrix.rust_channel != '1.61.0') &&
           !contains(matrix.host_os, 'windows') }}
-        run: rustup toolchain install --component=llvm-tools-preview ${{ matrix.rust_channel }}
+        run: rustup toolchain install --no-self-update --component=llvm-tools-preview ${{ matrix.rust_channel }}
 
       - if: ${{ (matrix.target != 'aarch64-apple-ios' || matrix.rust_channel != '1.61.0') &&
           !contains(matrix.host_os, 'windows') }}
@@ -499,7 +499,7 @@ jobs:
 
       # Check that all the needed symbol renaming was done.
       # TODO: Do this check on Windows too.
-      - run: rustup toolchain install --component=llvm-tools-preview ${{ matrix.rust_channel }}
+      - run: rustup toolchain install --no-self-update --component=llvm-tools-preview ${{ matrix.rust_channel }}
       - run: mk/check-symbol-prefixes.sh +${{ matrix.rust_channel }} --target=${{ matrix.target }}
 
   coverage:
