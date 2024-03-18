@@ -86,76 +86,71 @@ fn aes_gcm_seal(
     let mut ctr = Counter::one(nonce);
     let tag_iv = ctr.increment();
 
-    #[cfg(target_arch = "x86_64")]
-    let in_out = {
-        if !aes_key.is_aes_hw(cpu_features) || !auth.is_avx() {
-            in_out
-        } else {
-            use crate::c;
-            let (htable, xi) = auth.inner();
-            prefixed_extern! {
-                // `HTable` and `Xi` should be 128-bit aligned. TODO: Can we shrink `HTable`? The
-                // assembly says it needs just nine values in that array.
-                fn aesni_gcm_encrypt(
-                    input: *const u8,
-                    output: *mut u8,
-                    len: c::size_t,
-                    key: &aes::AES_KEY,
-                    ivec: &mut Counter,
-                    Htable: &gcm::HTable,
-                    Xi: &mut gcm::Xi) -> c::size_t;
-            }
-            let processed = unsafe {
-                aesni_gcm_encrypt(
-                    in_out.as_ptr(),
-                    in_out.as_mut_ptr(),
-                    in_out.len(),
-                    aes_key.inner_less_safe(),
-                    &mut ctr,
-                    htable,
-                    xi,
-                )
-            };
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    let mut in_out = in_out;
 
-            &mut in_out[processed..]
+    #[cfg(target_arch = "x86_64")]
+    if aes_key.is_aes_hw(cpu_features) && auth.is_avx() {
+        use crate::c;
+        let (htable, xi) = auth.inner();
+        prefixed_extern! {
+            // `HTable` and `Xi` should be 128-bit aligned. TODO: Can we shrink `HTable`? The
+            // assembly says it needs just nine values in that array.
+            fn aesni_gcm_encrypt(
+                input: *const u8,
+                output: *mut u8,
+                len: c::size_t,
+                key: &aes::AES_KEY,
+                ivec: &mut Counter,
+                Htable: &gcm::HTable,
+                Xi: &mut gcm::Xi) -> c::size_t;
         }
-    };
+        let processed = unsafe {
+            aesni_gcm_encrypt(
+                in_out.as_ptr(),
+                in_out.as_mut_ptr(),
+                in_out.len(),
+                aes_key.inner_less_safe(),
+                &mut ctr,
+                htable,
+                xi,
+            )
+        };
+
+        in_out = &mut in_out[processed..];
+    }
 
     #[cfg(target_arch = "aarch64")]
-    let in_out = {
-        if !aes_key.is_aes_hw(cpu_features) || !auth.is_clmul() {
-            in_out
-        } else {
-            let whole_block_bits = auth.in_out_whole_block_bits();
-            if whole_block_bits.as_bits() > 0 {
-                use crate::{bits::BitLength, c};
-                let (htable, xi) = auth.inner();
-                prefixed_extern! {
-                    fn aes_gcm_enc_kernel(
-                        input: *const u8,
-                        in_bits: BitLength<c::size_t>,
-                        output: *mut u8,
-                        Xi: &mut gcm::Xi,
-                        ivec: &mut Counter,
-                        key: &aes::AES_KEY,
-                        Htable: &gcm::HTable);
-                }
-                unsafe {
-                    aes_gcm_enc_kernel(
-                        in_out.as_ptr(),
-                        whole_block_bits,
-                        in_out.as_mut_ptr(),
-                        xi,
-                        &mut ctr,
-                        aes_key.inner_less_safe(),
-                        htable,
-                    )
-                }
+    if aes_key.is_aes_hw(cpu_features) && auth.is_clmul() {
+        let whole_block_bits = auth.in_out_whole_block_bits();
+        if whole_block_bits.as_bits() > 0 {
+            use crate::{bits::BitLength, c};
+            let (htable, xi) = auth.inner();
+            prefixed_extern! {
+                fn aes_gcm_enc_kernel(
+                    input: *const u8,
+                    in_bits: BitLength<c::size_t>,
+                    output: *mut u8,
+                    Xi: &mut gcm::Xi,
+                    ivec: &mut Counter,
+                    key: &aes::AES_KEY,
+                    Htable: &gcm::HTable);
             }
-
-            &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..]
+            unsafe {
+                aes_gcm_enc_kernel(
+                    in_out.as_ptr(),
+                    whole_block_bits,
+                    in_out.as_mut_ptr(),
+                    xi,
+                    &mut ctr,
+                    aes_key.inner_less_safe(),
+                    htable,
+                )
+            }
         }
-    };
+
+        in_out = &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..];
+    }
 
     let (whole, remainder) = {
         let in_out_len = in_out.len();
@@ -193,6 +188,9 @@ fn aes_gcm_open(
         _ => unreachable!(),
     };
 
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    let mut in_out = in_out;
+
     let mut auth = {
         let unprefixed_len = in_out
             .len()
@@ -207,76 +205,68 @@ fn aes_gcm_open(
     let in_prefix_len = src.start;
 
     #[cfg(target_arch = "x86_64")]
-    let in_out = {
-        if !aes_key.is_aes_hw(cpu_features) || !auth.is_avx() {
-            in_out
-        } else {
-            use crate::c;
-            let (htable, xi) = auth.inner();
-            prefixed_extern! {
-                // `HTable` and `Xi` should be 128-bit aligned. TODO: Can we shrink `HTable`? The
-                // assembly says it needs just nine values in that array.
-                fn aesni_gcm_decrypt(
-                    input: *const u8,
-                    output: *mut u8,
-                    len: c::size_t,
-                    key: &aes::AES_KEY,
-                    ivec: &mut Counter,
-                    Htable: &gcm::HTable,
-                    Xi: &mut gcm::Xi) -> c::size_t;
-            }
-
-            let processed = unsafe {
-                aesni_gcm_decrypt(
-                    in_out[src.clone()].as_ptr(),
-                    in_out.as_mut_ptr(),
-                    in_out.len() - src.start,
-                    aes_key.inner_less_safe(),
-                    &mut ctr,
-                    htable,
-                    xi,
-                )
-            };
-            &mut in_out[processed..]
+    if aes_key.is_aes_hw(cpu_features) && auth.is_avx() {
+        use crate::c;
+        let (htable, xi) = auth.inner();
+        prefixed_extern! {
+            // `HTable` and `Xi` should be 128-bit aligned. TODO: Can we shrink `HTable`? The
+            // assembly says it needs just nine values in that array.
+            fn aesni_gcm_decrypt(
+                input: *const u8,
+                output: *mut u8,
+                len: c::size_t,
+                key: &aes::AES_KEY,
+                ivec: &mut Counter,
+                Htable: &gcm::HTable,
+                Xi: &mut gcm::Xi) -> c::size_t;
         }
-    };
+
+        let processed = unsafe {
+            aesni_gcm_decrypt(
+                in_out[src.clone()].as_ptr(),
+                in_out.as_mut_ptr(),
+                in_out.len() - src.start,
+                aes_key.inner_less_safe(),
+                &mut ctr,
+                htable,
+                xi,
+            )
+        };
+        in_out = &mut in_out[processed..];
+    }
 
     #[cfg(target_arch = "aarch64")]
-    let in_out = {
-        if !aes_key.is_aes_hw(cpu_features) || !auth.is_clmul() {
-            in_out
-        } else {
-            let whole_block_bits = auth.in_out_whole_block_bits();
-            if whole_block_bits.as_bits() > 0 {
-                use crate::{bits::BitLength, c};
-                let (htable, xi) = auth.inner();
-                prefixed_extern! {
-                    fn aes_gcm_dec_kernel(
-                        input: *const u8,
-                        in_bits: BitLength<c::size_t>,
-                        output: *mut u8,
-                        Xi: &mut gcm::Xi,
-                        ivec: &mut Counter,
-                        key: &aes::AES_KEY,
-                        Htable: &gcm::HTable);
-                }
-
-                unsafe {
-                    aes_gcm_dec_kernel(
-                        in_out[src.clone()].as_ptr(),
-                        whole_block_bits,
-                        in_out.as_mut_ptr(),
-                        xi,
-                        &mut ctr,
-                        aes_key.inner_less_safe(),
-                        htable,
-                    )
-                }
+    if aes_key.is_aes_hw(cpu_features) && auth.is_clmul() {
+        let whole_block_bits = auth.in_out_whole_block_bits();
+        if whole_block_bits.as_bits() > 0 {
+            use crate::{bits::BitLength, c};
+            let (htable, xi) = auth.inner();
+            prefixed_extern! {
+                fn aes_gcm_dec_kernel(
+                    input: *const u8,
+                    in_bits: BitLength<c::size_t>,
+                    output: *mut u8,
+                    Xi: &mut gcm::Xi,
+                    ivec: &mut Counter,
+                    key: &aes::AES_KEY,
+                    Htable: &gcm::HTable);
             }
 
-            &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..]
+            unsafe {
+                aes_gcm_dec_kernel(
+                    in_out[src.clone()].as_ptr(),
+                    whole_block_bits,
+                    in_out.as_mut_ptr(),
+                    xi,
+                    &mut ctr,
+                    aes_key.inner_less_safe(),
+                    htable,
+                )
+            }
         }
-    };
+
+        in_out = &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..];
+    }
 
     let whole_len = {
         let in_out_len = in_out.len() - in_prefix_len;
