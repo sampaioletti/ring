@@ -12,15 +12,14 @@
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use super::{nonce::Nonce, quic::Sample};
+use super::{inout::InOutBlocks, nonce::Nonce, quic::Sample};
 use crate::{
     bits::{BitLength, FromByteLen as _},
     c, constant_time, cpu,
     endian::BigEndian,
     error,
-    polyfill::{self, ArrayFlatten as _, ArraySplitMap as _},
+    polyfill::{usize_from_u32, ArrayFlatten as _, ArraySplitMap as _},
 };
-use core::ops::RangeFrom;
 
 #[derive(Clone)]
 pub(super) struct Key {
@@ -75,49 +74,45 @@ fn encrypt_block_(
 }
 
 macro_rules! ctr32_encrypt_blocks {
-    ($name:ident, $in_out:expr, $src:expr, $key:expr, $ivec:expr ) => {{
+    ($name:ident, $in_out:expr, $key:expr, $ivec:expr ) => {{
         prefixed_extern! {
             fn $name(
                 input: *const [u8; BLOCK_LEN],
                 output: *mut [u8; BLOCK_LEN],
-                blocks: c::size_t,
+                blocks: c::NonZero_size_t,
                 key: &AES_KEY,
                 ivec: &Counter,
             );
         }
-        ctr32_encrypt_blocks_($name, $in_out, $src, $key, $ivec)
+        ctr32_encrypt_blocks_($name, $in_out, $key, $ivec)
     }};
 }
 
 #[inline]
-fn ctr32_encrypt_blocks_(
+fn ctr32_encrypt_blocks_<'io>(
     f: unsafe extern "C" fn(
         input: *const [u8; BLOCK_LEN],
         output: *mut [u8; BLOCK_LEN],
-        blocks: c::size_t,
+        blocks: c::NonZero_size_t,
         key: &AES_KEY,
         ivec: &Counter,
     ),
-    in_out: &mut [u8],
-    src: RangeFrom<usize>,
+    mut in_out: InOutBlocks<'io, BLOCK_LEN>,
     key: &AES_KEY,
     ctr: &mut Counter,
-) {
-    let in_out_len = in_out[src.clone()].len();
-    assert_eq!(in_out_len % BLOCK_LEN, 0);
-
-    let blocks = in_out_len / BLOCK_LEN;
+) -> &'io [[u8; BLOCK_LEN]] {
+    let blocks = in_out.len();
     #[allow(clippy::cast_possible_truncation)]
-    let blocks_u32 = blocks as u32;
-    assert_eq!(blocks, polyfill::usize_from_u32(blocks_u32));
+    let blocks_u32 = in_out.len().get() as u32;
+    assert_eq!(in_out.len().get(), usize_from_u32(blocks_u32));
 
-    let input = in_out[src].as_ptr().cast::<[u8; BLOCK_LEN]>();
-    let output = in_out.as_mut_ptr().cast::<[u8; BLOCK_LEN]>();
-
+    let input = in_out.input().as_ptr();
+    let output = in_out.output_mut_ptr();
     unsafe {
         f(input, output, blocks, key, ctr);
     }
     ctr.increment_by_less_safe(blocks_u32);
+    in_out.into_output()
 }
 
 impl Key {
@@ -199,17 +194,12 @@ impl Key {
     }
 
     #[inline]
-    pub(super) fn ctr32_encrypt_within(
+    pub(super) fn ctr32_encrypt_within<'io>(
         &self,
-        in_out: &mut [u8],
-        src: RangeFrom<usize>,
+        in_out: InOutBlocks<'io, BLOCK_LEN>,
         ctr: &mut Counter,
         cpu_features: cpu::Features,
-    ) {
-        let in_out_len = in_out[src.clone()].len();
-
-        assert_eq!(in_out_len % BLOCK_LEN, 0);
-
+    ) -> &'io [[u8; BLOCK_LEN]] {
         match detect_implementation(cpu_features) {
             #[cfg(any(
                 target_arch = "aarch64",
@@ -218,7 +208,7 @@ impl Key {
                 target_arch = "x86"
             ))]
             Implementation::HWAES => {
-                ctr32_encrypt_blocks!(aes_hw_ctr32_encrypt_blocks, in_out, src, &self.inner, ctr)
+                ctr32_encrypt_blocks!(aes_hw_ctr32_encrypt_blocks, in_out, &self.inner, ctr)
             }
 
             #[cfg(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64"))]
@@ -256,18 +246,16 @@ impl Key {
                     in_out
                 };
 
-                ctr32_encrypt_blocks!(vpaes_ctr32_encrypt_blocks, in_out, src, &self.inner, ctr)
+                ctr32_encrypt_blocks!(vpaes_ctr32_encrypt_blocks, in_out, &self.inner, ctr)
             }
 
             #[cfg(target_arch = "x86")]
-            Implementation::VPAES_BSAES => {
-                super::shift::shift_full_blocks(in_out, src, |input| {
-                    self.encrypt_iv_xor_block(ctr.increment(), *input, cpu_features)
-                });
-            }
+            Implementation::VPAES_BSAES => super::shift::shift_full_blocks(in_out, |input| {
+                self.encrypt_iv_xor_block(ctr.increment(), *input, cpu_features)
+            }),
 
             Implementation::NOHW => {
-                ctr32_encrypt_blocks!(aes_nohw_ctr32_encrypt_blocks, in_out, src, &self.inner, ctr)
+                ctr32_encrypt_blocks!(aes_nohw_ctr32_encrypt_blocks, in_out, &self.inner, ctr)
             }
         }
     }

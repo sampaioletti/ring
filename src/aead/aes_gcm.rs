@@ -14,7 +14,9 @@
 
 use super::{
     aes::{self, Counter, BLOCK_LEN, ZERO_BLOCK},
-    gcm, shift, Aad, Nonce, Tag,
+    gcm,
+    inout::InOut,
+    shift, Aad, Nonce, Tag,
 };
 use crate::{
     aead, constant_time, cpu, error,
@@ -159,8 +161,10 @@ fn aes_gcm_seal(
     };
 
     for chunk in whole.chunks_mut(CHUNK_BLOCKS * BLOCK_LEN) {
-        aes_key.ctr32_encrypt_within(chunk, 0.., &mut ctr, cpu_features);
-        auth.update_blocks(chunk);
+        let mut in_out = InOut::new(chunk, 0..)?;
+        let chunk = in_out.first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>().unwrap();
+        let ciphertext = aes_key.ctr32_encrypt_within(chunk, &mut ctr, cpu_features);
+        auth.update_blocks(ciphertext);
     }
 
     if !remainder.is_empty() {
@@ -188,21 +192,10 @@ fn aes_gcm_open(
         _ => unreachable!(),
     };
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-    let mut in_out = in_out;
-
-    let mut auth = {
-        let unprefixed_len = in_out
-            .len()
-            .checked_sub(src.start)
-            .ok_or(error::Unspecified)?;
-        gcm::Context::new(gcm_key, aad, unprefixed_len, cpu_features)
-    }?;
-
+    let mut in_out = InOut::new(in_out, src)?;
+    let mut auth = gcm::Context::new(gcm_key, aad, in_out.len(), cpu_features)?;
     let mut ctr = Counter::one(nonce);
     let tag_iv = ctr.increment();
-
-    let in_prefix_len = src.start;
 
     #[cfg(target_arch = "x86_64")]
     if aes_key.is_aes_hw(cpu_features) && auth.is_avx() {
@@ -223,16 +216,16 @@ fn aes_gcm_open(
 
         let processed = unsafe {
             aesni_gcm_decrypt(
-                in_out[src.clone()].as_ptr(),
-                in_out.as_mut_ptr(),
-                in_out.len() - src.start,
+                in_out.input().as_ptr(),
+                in_out.output_mut_ptr(),
+                in_out.len(),
                 aes_key.inner_less_safe(),
                 &mut ctr,
                 htable,
                 xi,
             )
         };
-        in_out = &mut in_out[processed..];
+        in_out = in_out.after(processed);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -243,9 +236,9 @@ fn aes_gcm_open(
             let (htable, xi) = auth.inner();
             prefixed_extern! {
                 fn aes_gcm_dec_kernel(
-                    input: *const u8,
+                    input: *const [u8; BLOCK_LEN],
                     in_bits: BitLength<c::size_t>,
-                    output: *mut u8,
+                    output: *mut [u8; BLOCK_LEN],
                     Xi: &mut gcm::Xi,
                     ivec: &mut Counter,
                     key: &aes::AES_KEY,
@@ -254,9 +247,9 @@ fn aes_gcm_open(
 
             unsafe {
                 aes_gcm_dec_kernel(
-                    in_out[src.clone()].as_ptr(),
+                    in_out.input().as_ptr().cast::<[u8; BLOCK_LEN]>(),
                     whole_block_bits,
-                    in_out.as_mut_ptr(),
+                    in_out.output_mut_ptr().cast::<[u8; BLOCK_LEN]>(),
                     xi,
                     &mut ctr,
                     aes_key.inner_less_safe(),
@@ -265,39 +258,16 @@ fn aes_gcm_open(
             }
         }
 
-        in_out = &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..];
+        in_out = in_out.after(whole_block_bits.as_usize_bytes_rounded_up())
     }
 
-    let whole_len = {
-        let in_out_len = in_out.len() - in_prefix_len;
-        in_out_len - (in_out_len % BLOCK_LEN)
-    };
-    {
-        let mut chunk_len = CHUNK_BLOCKS * BLOCK_LEN;
-        let mut output = 0;
-        let mut input = in_prefix_len;
-        loop {
-            if whole_len - output < chunk_len {
-                chunk_len = whole_len - output;
-            }
-            if chunk_len == 0 {
-                break;
-            }
-
-            auth.update_blocks(&in_out[input..][..chunk_len]);
-            aes_key.ctr32_encrypt_within(
-                &mut in_out[output..][..(chunk_len + in_prefix_len)],
-                in_prefix_len..,
-                &mut ctr,
-                cpu_features,
-            );
-            output += chunk_len;
-            input += chunk_len;
-        }
+    while let Some(chunk) = in_out.first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>() {
+        auth.update_blocks(chunk.input());
+        let _plaintext = aes_key.ctr32_encrypt_within(chunk, &mut ctr, cpu_features);
+        in_out = in_out.after_first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>();
     }
 
-    let remainder = &mut in_out[whole_len..];
-    shift::shift_partial((in_prefix_len, remainder), |remainder| {
+    shift::shift_partial(in_out, |remainder| {
         let mut input = ZERO_BLOCK;
         overwrite_at_start(&mut input, remainder);
         auth.update_block(input);

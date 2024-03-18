@@ -246,6 +246,7 @@ mod chacha;
 mod chacha20_poly1305;
 pub mod chacha20_poly1305_openssh;
 mod gcm;
+mod inout;
 mod less_safe_key;
 mod nonce;
 mod opening_key;
