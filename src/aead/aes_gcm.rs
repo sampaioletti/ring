@@ -16,7 +16,8 @@ use super::{
     aes::{self, Counter, BLOCK_LEN, ZERO_BLOCK},
     gcm,
     inout::InOut,
-    shift, Aad, Nonce, Tag,
+    shift::shift_partial,
+    Aad, Nonce, Tag,
 };
 use crate::{
     aead, constant_time, cpu, error,
@@ -154,27 +155,22 @@ fn aes_gcm_seal(
         in_out = &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..];
     }
 
-    let (whole, remainder) = {
-        let in_out_len = in_out.len();
-        let whole_len = in_out_len - (in_out_len % BLOCK_LEN);
-        in_out.split_at_mut(whole_len)
-    };
+    let mut in_out = InOut::new(in_out, 0..)?;
 
-    for chunk in whole.chunks_mut(CHUNK_BLOCKS * BLOCK_LEN) {
-        let mut in_out = InOut::new(chunk, 0..)?;
-        let chunk = in_out.first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>().unwrap();
+    while let Some(chunk) = in_out.first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>() {
         let ciphertext = aes_key.ctr32_encrypt_within(chunk, &mut ctr, cpu_features);
         auth.update_blocks(ciphertext);
+        in_out = in_out.after_first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>();
     }
 
-    if !remainder.is_empty() {
+    shift_partial(in_out, |remainder| {
         let mut input = ZERO_BLOCK;
         overwrite_at_start(&mut input, remainder);
         let mut output = aes_key.encrypt_iv_xor_block(ctr.into(), input, cpu_features);
         output[remainder.len()..].fill(0);
         auth.update_block(output);
-        overwrite_at_start(remainder, &output);
-    }
+        output
+    });
 
     Ok(finish(aes_key, auth, tag_iv))
 }
@@ -267,7 +263,7 @@ fn aes_gcm_open(
         in_out = in_out.after_first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>();
     }
 
-    shift::shift_partial(in_out, |remainder| {
+    shift_partial(in_out, |remainder| {
         let mut input = ZERO_BLOCK;
         overwrite_at_start(&mut input, remainder);
         auth.update_block(input);
