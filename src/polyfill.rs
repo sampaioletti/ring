@@ -53,6 +53,8 @@ pub mod sliceutil;
 #[cfg(feature = "alloc")]
 mod leading_zeros_skipped;
 
+pub mod nonempty;
+
 pub mod ptr;
 
 pub mod slice;

@@ -18,7 +18,7 @@ use crate::{
     c, constant_time, cpu,
     endian::BigEndian,
     error,
-    polyfill::{usize_from_u32, ArrayFlatten as _, ArraySplitMap as _},
+    polyfill::{nonempty, usize_from_u32, ArrayFlatten as _, ArraySplitMap as _},
 };
 
 #[derive(Clone)]
@@ -100,7 +100,7 @@ fn ctr32_encrypt_blocks_<'io>(
     mut in_out: InOutBlocks<'io, BLOCK_LEN>,
     key: &AES_KEY,
     ctr: &mut Counter,
-) -> &'io [[u8; BLOCK_LEN]] {
+) -> nonempty::Slice<'io, [u8; BLOCK_LEN]> {
     let blocks = in_out.len();
     #[allow(clippy::cast_possible_truncation)]
     let blocks_u32 = in_out.len().get() as u32;
@@ -199,7 +199,7 @@ impl Key {
         in_out: InOutBlocks<'io, BLOCK_LEN>,
         ctr: &mut Counter,
         cpu_features: cpu::Features,
-    ) -> &'io [[u8; BLOCK_LEN]] {
+    ) -> nonempty::Slice<'io, [u8; BLOCK_LEN]> {
         match detect_implementation(cpu_features) {
             #[cfg(any(
                 target_arch = "aarch64",

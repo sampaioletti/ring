@@ -13,7 +13,7 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 use crate::error;
-use crate::polyfill::slice;
+use crate::polyfill::{nonempty, slice};
 use core::num::NonZeroUsize;
 use core::ops::RangeFrom;
 
@@ -65,12 +65,12 @@ impl<'io> InOut<'io> {
         &mut self,
     ) -> Option<InOutBlocks<BLOCK_LEN>> {
         let chunk_len = self.chunk_len::<STRIDE_BLOCKS, BLOCK_LEN>();
-        let len = NonZeroUsize::new(chunk_len / BLOCK_LEN)?;
+        let _: NonZeroUsize = NonZeroUsize::new(chunk_len / BLOCK_LEN)?;
         let in_out = InOut {
             in_out: &mut self.in_out[..(self.src.start + chunk_len)],
             src: self.src.clone(),
         };
-        Some(InOutBlocks { in_out, len })
+        Some(InOutBlocks { in_out })
     }
 
     pub fn after_first_chunk<const STRIDE_BLOCKS: usize, const BLOCK_LEN: usize>(self) -> Self {
@@ -92,27 +92,28 @@ impl<'io> InOut<'io> {
     }
 }
 
+/// Non-empty (non-zero-length) in-out of `BLOCK_LEN` chunks.
 pub struct InOutBlocks<'io, const BLOCK_LEN: usize> {
     in_out: InOut<'io>,
-    len: NonZeroUsize,
 }
 
 impl<'io, const BLOCK_LEN: usize> InOutBlocks<'io, BLOCK_LEN> {
     pub fn len(&self) -> NonZeroUsize {
-        debug_assert_eq!(self.input().len(), self.len.get());
-        self.len
+        self.input().len()
     }
 
-    pub fn input(&self) -> &[[u8; BLOCK_LEN]] {
+    pub fn input(&self) -> nonempty::Slice<[u8; BLOCK_LEN]> {
         let (full_blocks, leftover) = slice::as_chunks(self.in_out.input());
         debug_assert_eq!(leftover.len(), 0);
-        full_blocks
+        // The unwrap won't fail because the constructor guarantees this.
+        nonempty::Slice::new(full_blocks).unwrap()
     }
 
-    pub fn into_output(self) -> &'io [[u8; BLOCK_LEN]] {
+    pub fn into_output(self) -> nonempty::Slice<'io, [u8; BLOCK_LEN]> {
         let (full_blocks, leftover) = slice::as_chunks(self.in_out.into_output());
         debug_assert_eq!(leftover.len(), 0);
-        full_blocks
+        // The unwrap won't fail because the constructor guarantees this.
+        nonempty::Slice::new(full_blocks).unwrap()
     }
 
     #[cfg(target_arch = "x86")]

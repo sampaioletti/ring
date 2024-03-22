@@ -15,6 +15,7 @@
 //! Bit lengths.
 
 use crate::{error, polyfill};
+use core::num::NonZeroUsize;
 
 /// The length of something, in bits.
 ///
@@ -34,6 +35,21 @@ impl FromByteLen<usize> for BitLength<usize> {
     #[inline]
     fn from_byte_len(bytes: usize) -> Result<Self, error::Unspecified> {
         let bits = bytes.checked_mul(8).ok_or(error::Unspecified)?;
+        Ok(Self(bits))
+    }
+}
+
+impl FromByteLen<NonZeroUsize> for BitLength<NonZeroUsize> {
+    #[inline]
+    fn from_byte_len(bytes: NonZeroUsize) -> Result<Self, error::Unspecified> {
+        // TODO:
+        // const _8: NonZeroUsize = unwrap_const(NonZeroUsize::new(8));
+        // let bits = bytes.checked_mul(_8).ok_or(error::Unspecified)?;
+        let bits = bytes
+            .get()
+            .checked_mul(8)
+            .and_then(NonZeroUsize::new)
+            .ok_or(error::Unspecified)?;
         Ok(Self(bits))
     }
 }

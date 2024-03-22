@@ -18,7 +18,7 @@ use super::inout::InOut;
 pub fn shift_full_blocks<'io, const BLOCK_LEN: usize>(
     mut in_out: super::inout::InOutBlocks<'io, BLOCK_LEN>,
     mut f: impl FnMut(&[u8; BLOCK_LEN]) -> [u8; BLOCK_LEN],
-) -> &'io [[u8; BLOCK_LEN]] {
+) -> crate::polyfill::nonempty::Slice<'io, [u8; BLOCK_LEN]> {
     for i in 0..in_out.len().get() {
         let input: &[_] = in_out.input().into();
         let transformed = f(&input[i]);

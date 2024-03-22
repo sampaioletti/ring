@@ -17,9 +17,9 @@ use super::{aes_gcm, Aad};
 use crate::{
     bits::{BitLength, FromByteLen as _},
     constant_time, cpu, error,
-    polyfill::{sliceutil::overwrite_at_start, ArrayFlatten as _, ArraySplitMap as _},
+    polyfill::{nonempty, sliceutil::overwrite_at_start, ArrayFlatten as _, ArraySplitMap as _},
 };
-use core::ops::BitXorAssign;
+use core::{num::NonZeroUsize, ops::BitXorAssign};
 
 // GCM uses the same block type as AES.
 use super::aes::{Block, BLOCK_LEN, ZERO_BLOCK};
@@ -147,12 +147,10 @@ impl Context {
         (&self.inner.Htable, &mut self.inner.Xi)
     }
 
-    pub fn update_blocks(&mut self, input: &[[u8; BLOCK_LEN]]) {
-        debug_assert!(!input.is_empty());
-
+    pub fn update_blocks(&mut self, input: nonempty::Slice<[u8; BLOCK_LEN]>) {
         // The assembly functions take the input length in bytes, not blocks.
         // TODO: document overflow assumptions.
-        let input_bytes = input.len() * BLOCK_LEN;
+        let input_bytes = NonZeroUsize::new(input.len().get() * BLOCK_LEN).unwrap();
 
         let xi = &mut self.inner.Xi;
         let h_table = &self.inner.Htable;
@@ -165,7 +163,7 @@ impl Context {
                         xi: &mut Xi,
                         Htable: &HTable,
                         inp: *const [u8; BLOCK_LEN],
-                        len: crate::c::size_t,
+                        len: crate::c::NonZero_size_t,
                     );
                 }
                 unsafe {
@@ -185,7 +183,7 @@ impl Context {
                         xi: &mut Xi,
                         Htable: &HTable,
                         inp: *const [u8; BLOCK_LEN],
-                        len: crate::c::size_t,
+                        len: crate::c::NonZero_size_t,
                     );
                 }
                 unsafe {
@@ -200,7 +198,7 @@ impl Context {
                         xi: &mut Xi,
                         Htable: &HTable,
                         inp: *const [u8; BLOCK_LEN],
-                        len: crate::c::size_t,
+                        len: crate::c::NonZero_size_t,
                     );
                 }
                 unsafe {
@@ -209,7 +207,7 @@ impl Context {
             }
 
             Implementation::Fallback => {
-                gcm_nohw::ghash(xi, h_table.Htable[0], input);
+                gcm_nohw::ghash(xi, h_table.Htable[0], input.into());
             }
         }
     }
