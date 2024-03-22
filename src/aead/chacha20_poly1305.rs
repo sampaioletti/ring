@@ -16,6 +16,7 @@ use super::{
     chacha::{self, Counter, Iv},
     poly1305, Aad, Nonce, Tag,
 };
+use crate::aead::inout::InOut;
 use crate::{
     aead, cpu, error,
     polyfill::{u64_from_usize, usize_from_u64_saturated, ArrayFlatten},
@@ -149,10 +150,8 @@ fn chacha20_poly1305_open(
         _ => unreachable!(),
     };
 
-    let unprefixed_len = in_out
-        .len()
-        .checked_sub(src.start)
-        .ok_or(error::Unspecified)?;
+    let mut in_out = InOut::new(in_out, src)?;
+    let unprefixed_len = in_out.len();
     if unprefixed_len > MAX_IN_OUT_LEN {
         return Err(error::Unspecified);
     }
@@ -199,8 +198,8 @@ fn chacha20_poly1305_open(
 
         let out = unsafe {
             chacha20_poly1305_open(
-                in_out.as_mut_ptr(),
-                in_out.as_ptr().add(src.start),
+                in_out.output_mut_ptr(),
+                in_out.input().as_ptr(),
                 unprefixed_len,
                 aad.as_ref().as_ptr(),
                 aad.as_ref().len(),
@@ -219,8 +218,8 @@ fn chacha20_poly1305_open(
     };
 
     poly1305_update_padded_16(&mut auth, aad.as_ref());
-    poly1305_update_padded_16(&mut auth, &in_out[src.clone()]);
-    chacha20_key.encrypt_within(counter, in_out, src.clone());
+    poly1305_update_padded_16(&mut auth, in_out.input());
+    let _plaintext: &[_] = chacha20_key.encrypt_within(counter, in_out);
     Ok(finish(auth, aad.as_ref().len(), unprefixed_len))
 }
 

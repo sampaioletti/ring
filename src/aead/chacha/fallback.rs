@@ -15,15 +15,14 @@
 // Adapted from the public domain, estream code by D. Bernstein.
 // Adapted from the BoringSSL crypto/chacha/chacha.c.
 
-use super::{Counter, Key, BLOCK_LEN};
-use core::ops::RangeFrom;
+use super::{super::inout::InOut, Counter, Key, BLOCK_LEN};
+use crate::{constant_time, polyfill::sliceutil};
 
-pub(super) fn ChaCha20_ctr32(
+pub(super) fn ChaCha20_ctr32<'io>(
     key: &Key,
     counter: Counter,
-    in_out: &mut [u8],
-    src: RangeFrom<usize>,
-) {
+    mut in_out: InOut<'io>,
+) -> &'io [u8] {
     const SIGMA: [u32; 4] = [
         u32::from_le_bytes(*b"expa"),
         u32::from_le_bytes(*b"nd 3"),
@@ -39,26 +38,17 @@ pub(super) fn ChaCha20_ctr32(
         key[6], key[7], counter[0], counter[1], counter[2], counter[3],
     ];
 
-    let mut in_out_len = in_out.len().checked_sub(src.start).unwrap();
-    let mut input = in_out[src].as_ptr();
-    let mut output = in_out.as_mut_ptr();
-
     let mut buf = [0u8; BLOCK_LEN];
-    while in_out_len > 0 {
+    for i in (0..in_out.len()).step_by(BLOCK_LEN) {
         chacha_core(&mut buf, &state);
         state[12] += 1;
 
-        let todo = core::cmp::min(BLOCK_LEN, in_out_len);
-        for (i, &b) in buf[..todo].iter().enumerate() {
-            let input = unsafe { *input.add(i) };
-            let b = input ^ b;
-            unsafe { *output.add(i) = b };
-        }
-
-        in_out_len -= todo;
-        input = unsafe { input.add(todo) };
-        output = unsafe { output.add(todo) };
+        let input = &in_out.input()[i..];
+        constant_time::xor_assign_at_start(&mut buf, input);
+        let output = &mut in_out.output_mut()[i..];
+        sliceutil::overwrite_at_start(output, &buf);
     }
+    in_out.into_output()
 }
 
 // Performs 20 rounds of ChaCha on `input`, storing the result in `output`.

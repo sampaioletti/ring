@@ -23,6 +23,10 @@ pub struct InOut<'io> {
 }
 
 impl<'io> InOut<'io> {
+    pub fn new_in_place(in_out: &'io mut [u8]) -> Self {
+        Self { in_out, src: 0.. }
+    }
+
     pub fn new(in_out: &'io mut [u8], src: RangeFrom<usize>) -> Result<Self, Error> {
         match in_out.get(src.clone()) {
             Some(_) => Ok(Self { in_out, src }),
@@ -43,13 +47,20 @@ impl<'io> InOut<'io> {
         &mut self.in_out[..len]
     }
 
-    pub fn into_output(self) -> &'io [u8] {
+    pub fn into_output(self) -> &'io mut [u8] {
         let len = self.len();
         &mut self.in_out[..len]
     }
 
     pub fn output_mut_ptr(&mut self) -> *mut u8 {
         self.output_mut().as_mut_ptr()
+    }
+
+    pub fn copy_within(self) -> &'io mut [u8] {
+        if self.src.start != 0 {
+            self.in_out.copy_within(self.src.clone(), 0);
+        }
+        self.into_output()
     }
 
     pub fn overwrite_at_start(&mut self, to_copy: &[u8]) {
@@ -149,6 +160,7 @@ impl<'io, const BLOCK_LEN: usize> InOutBlocks<'io, BLOCK_LEN> {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
     Index,

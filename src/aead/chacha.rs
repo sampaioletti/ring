@@ -13,7 +13,8 @@
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use super::{quic::Sample, Nonce};
+use super::{inout::InOut, quic::Sample, Nonce};
+use crate::polyfill::ArraySplitMap;
 
 #[cfg(any(
     test,
@@ -25,9 +26,6 @@ use super::{quic::Sample, Nonce};
     ))
 ))]
 mod fallback;
-
-use crate::polyfill::ArraySplitMap;
-use core::ops::RangeFrom;
 
 #[derive(Clone)]
 pub struct Key {
@@ -45,7 +43,7 @@ impl Key {
 impl Key {
     #[inline]
     pub fn encrypt_in_place(&self, counter: Counter, in_out: &mut [u8]) {
-        self.encrypt_within(counter, in_out, 0..);
+        let _: &[_] = self.encrypt_within(counter, InOut::new_in_place(in_out));
     }
 
     #[inline]
@@ -53,7 +51,7 @@ impl Key {
         // It is safe to use `into_counter_for_single_block_less_safe()`
         // because `in_out` is exactly one block long.
         debug_assert!(in_out.len() <= BLOCK_LEN);
-        self.encrypt_within(iv.into_counter_for_single_block_less_safe(), in_out, 0..);
+        self.encrypt_in_place(iv.into_counter_for_single_block_less_safe(), in_out);
     }
 
     #[inline]
@@ -62,14 +60,14 @@ impl Key {
         let iv = Iv::assume_unique_for_key(sample);
 
         debug_assert!(out.len() <= BLOCK_LEN);
-        self.encrypt_within(iv.into_counter_for_single_block_less_safe(), &mut out, 0..);
+        self.encrypt_in_place(iv.into_counter_for_single_block_less_safe(), &mut out);
 
         out
     }
 
     /// Analogous to `slice::copy_within()`.
     #[inline(always)]
-    pub fn encrypt_within(&self, counter: Counter, in_out: &mut [u8], src: RangeFrom<usize>) {
+    pub fn encrypt_within<'io>(&self, counter: Counter, in_out: InOut<'io>) -> &'io [u8] {
         #[cfg(any(
             target_arch = "aarch64",
             target_arch = "arm",
@@ -77,28 +75,12 @@ impl Key {
             target_arch = "x86_64"
         ))]
         #[inline(always)]
-        pub(super) fn ChaCha20_ctr32(
+        pub(super) fn ChaCha20_ctr32<'io>(
             key: &Key,
             counter: Counter,
-            in_out: &mut [u8],
-            src: RangeFrom<usize>,
-        ) {
-            // XXX: The x86 and at least one branch of the ARM assembly language
-            // code doesn't allow overlapping input and output unless they are
-            // exactly overlapping. TODO: Figure out which branch of the ARM code
-            // has this limitation and come up with a better solution.
-            //
-            // https://rt.openssl.org/Ticket/Display.html?id=4362
-
-            let len = in_out.len().checked_sub(src.start).unwrap();
-
-            let (output, input) =
-                if cfg!(any(target_arch = "arm", target_arch = "x86")) && src.start != 0 {
-                    in_out.copy_within(src, 0);
-                    (in_out.as_mut_ptr(), in_out.as_ptr())
-                } else {
-                    (in_out.as_mut_ptr(), in_out[src].as_ptr())
-                };
+            mut in_out: InOut<'io>,
+        ) -> &'io [u8] {
+            let len = in_out.len();
 
             // There's no need to worry if `counter` is incremented because it is
             // owned here and we drop immediately after the call.
@@ -111,7 +93,38 @@ impl Key {
                     counter: &Counter,
                 );
             }
-            unsafe { ChaCha20_ctr32(output, input, len, key.words_less_safe(), &counter) }
+
+            // XXX: The x86 and at least one branch of the ARM assembly language
+            // code doesn't allow overlapping input and output unless they are
+            // exactly overlapping. TODO: Figure out which branch of the ARM code
+            // has this limitation and come up with a better solution.
+            //
+            // https://rt.openssl.org/Ticket/Display.html?id=4362
+
+            if cfg!(any(target_arch = "arm", target_arch = "x86")) {
+                let in_out = in_out.copy_within();
+                unsafe {
+                    ChaCha20_ctr32(
+                        in_out.as_mut_ptr(),
+                        in_out.as_ptr(),
+                        len,
+                        key.words_less_safe(),
+                        &counter,
+                    )
+                };
+                in_out
+            } else {
+                unsafe {
+                    ChaCha20_ctr32(
+                        in_out.output_mut_ptr(),
+                        in_out.input().as_ptr(),
+                        len,
+                        key.words_less_safe(),
+                        &counter,
+                    )
+                };
+                in_out.into_output()
+            }
         }
 
         #[cfg(not(any(
@@ -122,7 +135,7 @@ impl Key {
         )))]
         use fallback::ChaCha20_ctr32;
 
-        ChaCha20_ctr32(self, counter, in_out, src);
+        ChaCha20_ctr32(self, counter, in_out)
     }
 
     #[inline]
@@ -233,7 +246,7 @@ mod tests {
     // works around that.
     fn chacha20_test(
         max_alignment_and_offset: (usize, usize),
-        f: impl for<'k, 'i> Fn(&'k Key, Counter, &'i mut [u8], RangeFrom<usize>),
+        f: impl for<'k, 'i> Fn(&'k Key, Counter, InOut<'i>) -> &'i [u8],
     ) {
         // Reuse a buffer to avoid slowing down the tests with allocations.
         let mut buf = vec![0u8; 1300];
@@ -279,7 +292,7 @@ mod tests {
         expected: &[u8],
         buf: &mut [u8],
         (max_alignment, max_offset): (usize, usize),
-        f: &impl for<'k, 'i> Fn(&'k Key, Counter, &'i mut [u8], RangeFrom<usize>),
+        f: &impl for<'k, 'i> Fn(&'k Key, Counter, InOut<'i>) -> &'i [u8],
     ) {
         const ARBITRARY: u8 = 123;
 
@@ -296,8 +309,10 @@ mod tests {
                     Nonce::try_assume_unique_for_key(nonce).unwrap(),
                     ctr,
                 );
-                f(key, ctr, buf, src);
-                assert_eq!(&buf[..input.len()], expected)
+                let in_out = InOut::new(buf, src).unwrap();
+                let rv = f(key, ctr, in_out);
+                assert_eq!(rv, expected);
+                assert_eq!(&buf[..input.len()], expected);
             }
         }
     }
