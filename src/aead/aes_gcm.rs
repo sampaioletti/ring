@@ -89,7 +89,7 @@ fn aes_gcm_seal(
     let mut ctr = Counter::one(nonce);
     let tag_iv = ctr.increment();
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     let mut in_out = in_out;
 
     #[cfg(target_arch = "x86_64")]
@@ -123,17 +123,25 @@ fn aes_gcm_seal(
         in_out = &mut in_out[processed..];
     }
 
+    let mut in_out = InOut::new(in_out, 0..)?;
+
     #[cfg(target_arch = "aarch64")]
     if aes_key.is_aes_hw(cpu_features) && auth.is_clmul() {
-        let whole_block_bits = auth.in_out_whole_block_bits();
-        if whole_block_bits.as_bits() > 0 {
-            use crate::{bits::BitLength, c};
+        if let Some(mut whole_blocks) = in_out.all_chunks() {
+            use crate::{
+                bits::{BitLength, FromByteLen as _},
+                c,
+            };
+
+            let whole_block_bytes = whole_blocks.len_in_bytes();
+            let whole_block_bits = BitLength::from_byte_len(whole_block_bytes)?;
             let (htable, xi) = auth.inner();
+
             prefixed_extern! {
                 fn aes_gcm_enc_kernel(
-                    input: *const u8,
-                    in_bits: BitLength<c::size_t>,
-                    output: *mut u8,
+                    input: *const [u8; BLOCK_LEN],
+                    in_bits: BitLength<c::NonZero_size_t>,
+                    output: *mut [u8; BLOCK_LEN],
                     Xi: &mut gcm::Xi,
                     ivec: &mut Counter,
                     key: &aes::AES_KEY,
@@ -141,21 +149,19 @@ fn aes_gcm_seal(
             }
             unsafe {
                 aes_gcm_enc_kernel(
-                    in_out.as_ptr(),
+                    whole_blocks.input().as_ptr(),
                     whole_block_bits,
-                    in_out.as_mut_ptr(),
+                    whole_blocks.output_mut_ptr(),
                     xi,
                     &mut ctr,
                     aes_key.inner_less_safe(),
                     htable,
                 )
             }
+
+            in_out = in_out.after(whole_block_bytes.get());
         }
-
-        in_out = &mut in_out[whole_block_bits.as_usize_bytes_rounded_up()..];
     }
-
-    let mut in_out = InOut::new(in_out, 0..)?;
 
     while let Some(chunk) = in_out.first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>() {
         let ciphertext = aes_key.ctr32_encrypt_within(chunk, &mut ctr, cpu_features);
@@ -226,36 +232,41 @@ fn aes_gcm_open(
 
     #[cfg(target_arch = "aarch64")]
     if aes_key.is_aes_hw(cpu_features) && auth.is_clmul() {
-        let whole_block_bits = auth.in_out_whole_block_bits();
-        if whole_block_bits.as_bits() > 0 {
-            use crate::{bits::BitLength, c};
+        if let Some(mut whole_blocks) = in_out.all_chunks() {
+            use crate::{
+                bits::{BitLength, FromByteLen as _},
+                c,
+            };
+
+            let whole_block_bytes = whole_blocks.len_in_bytes();
+            let whole_block_bits = BitLength::from_byte_len(whole_block_bytes)?;
             let (htable, xi) = auth.inner();
+
             prefixed_extern! {
                 fn aes_gcm_dec_kernel(
                     input: *const [u8; BLOCK_LEN],
-                    in_bits: BitLength<c::size_t>,
+                    in_bits: BitLength<c::NonZero_size_t>,
                     output: *mut [u8; BLOCK_LEN],
                     Xi: &mut gcm::Xi,
                     ivec: &mut Counter,
                     key: &aes::AES_KEY,
                     Htable: &gcm::HTable);
             }
-
             unsafe {
                 aes_gcm_dec_kernel(
-                    in_out.input().as_ptr().cast::<[u8; BLOCK_LEN]>(),
+                    whole_blocks.input().as_ptr(),
                     whole_block_bits,
-                    in_out.output_mut_ptr().cast::<[u8; BLOCK_LEN]>(),
+                    whole_blocks.output_mut_ptr(),
                     xi,
                     &mut ctr,
                     aes_key.inner_less_safe(),
                     htable,
                 )
             }
-        }
 
-        in_out = in_out.after(whole_block_bits.as_usize_bytes_rounded_up())
-    }
+            in_out = in_out.after(whole_block_bytes.get());
+        }
+    };
 
     while let Some(chunk) = in_out.first_chunk::<CHUNK_BLOCKS, BLOCK_LEN>() {
         auth.update_blocks(chunk.input());

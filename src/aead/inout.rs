@@ -61,6 +61,18 @@ impl<'io> InOut<'io> {
             });
     }
 
+    #[cfg(target_arch = "aarch64")]
+    pub fn all_chunks<const BLOCK_LEN: usize>(&mut self) -> Option<InOutBlocks<BLOCK_LEN>> {
+        let len = self.len();
+        let chunk_len = len - (len % BLOCK_LEN);
+        let _: NonZeroUsize = NonZeroUsize::new(chunk_len / BLOCK_LEN)?;
+        let in_out = InOut {
+            in_out: &mut self.in_out[..(self.src.start + chunk_len)],
+            src: self.src.clone(),
+        };
+        Some(InOutBlocks { in_out })
+    }
+
     pub fn first_chunk<const STRIDE_BLOCKS: usize, const BLOCK_LEN: usize>(
         &mut self,
     ) -> Option<InOutBlocks<BLOCK_LEN>> {
@@ -100,6 +112,15 @@ pub struct InOutBlocks<'io, const BLOCK_LEN: usize> {
 impl<'io, const BLOCK_LEN: usize> InOutBlocks<'io, BLOCK_LEN> {
     pub fn len(&self) -> NonZeroUsize {
         self.input().len()
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub fn len_in_bytes(&self) -> NonZeroUsize {
+        // The `unwrap` cannot fail; `self.len()` is a `NonZeroUsize`,
+        // `BLOCK_LEN` cannot be zero since we divide by `BLOCK_LEN` to
+        // construct `self`, and the multiplication cannot overflow
+        // because `self` was constructed from an array of this size.
+        NonZeroUsize::new(self.len().get() * BLOCK_LEN).unwrap()
     }
 
     pub fn input(&self) -> nonempty::Slice<[u8; BLOCK_LEN]> {
