@@ -76,7 +76,7 @@ aarch64-unknown-linux-gnu)
     gcc-aarch64-linux-gnu \
     libc6-dev-arm64-cross
   ;;
-aarch64-unknown-linux-musl|armv7-unknown-linux-musleabihf)
+aarch64-unknown-linux-musl|armv7-unknown-linux-musleabihf|thumbv7neon-unknown-linux-musleabihf)
   use_clang=1
   install_packages \
     qemu-user

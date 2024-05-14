@@ -534,6 +534,7 @@ jobs:
           - powerpc64le-unknown-linux-gnu  # No assembly 64-bit little-endian with flags
           - riscv64gc-unknown-linux-gnu    # No assembly 64-bit little-endian without flags
           - s390x-unknown-linux-gnu        # No assembly 64-bit big-endian
+          - thumbv7neon-unknown-linux-musleabihf # Has assembly, thumb instruction set.
           - x86_64-apple-darwin            # Has assembly
           - x86_64-unknown-linux-musl      # Has assembly
 
@@ -592,6 +593,9 @@ jobs:
             host_os: ubuntu-22.04
 
           - target: s390x-unknown-linux-gnu
+            host_os: ubuntu-22.04
+
+          - target: thumbv7neon-unknown-linux-musleabihf
             host_os: ubuntu-22.04
 
           - target: x86_64-apple-darwin

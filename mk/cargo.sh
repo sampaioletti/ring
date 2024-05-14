@@ -170,6 +170,11 @@ case $target in
     export CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_LINKER=s390x-linux-gnu-gcc
     export CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUNNER="$qemu_s390x"
     ;;
+  thumbv7neon-unknown-linux-musleabihf)
+    use_clang=1
+    export CARGO_TARGET_THUMBV7NEON_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS="$rustflags_self_contained"
+    export CARGO_TARGET_THUMBV7NEON_UNKNOWN_LINUX_MUSLEABIHF_RUNNER="$qemu_arm_gnueabihf"
+    ;;
   x86_64-unknown-linux-musl)
     use_clang=1
     # XXX: Work around https://github.com/rust-lang/rust/issues/79555.
