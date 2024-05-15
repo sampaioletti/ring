@@ -179,7 +179,7 @@ impl Key {
         cpu_features: cpu::Features,
     ) -> Result<Self, error::Unspecified> {
         let mut key = AES_KEY {
-            rd_key: [0u32; 4 * (MAX_ROUNDS + 1)],
+            rd_key: [[0u32; 4]; MAX_ROUNDS + 1],
             rounds: 0,
         };
 
@@ -225,7 +225,11 @@ impl Key {
             ))]
             Implementation::VPAES_BSAES => encrypt_block!(vpaes_encrypt, a, self),
 
-            Implementation::NOHW => encrypt_block!(aes_nohw_encrypt, a, self),
+            Implementation::NOHW => {
+                let mut in_out = a;
+                aes_nohw::encrypt_block(&self.inner, &mut in_out);
+                in_out
+            }
         }
     }
 
@@ -362,7 +366,7 @@ impl Key {
 #[repr(C)]
 #[derive(Clone)]
 pub(super) struct AES_KEY {
-    pub rd_key: [u32; 4 * (MAX_ROUNDS + 1)],
+    pub rd_key: [[u32; 4]; MAX_ROUNDS + 1],
     pub rounds: c::uint,
 }
 
@@ -510,7 +514,7 @@ unsafe fn bsaes_ctr32_encrypt_blocks_with_vpaes_key(
     }
 
     let mut bsaes_key = AES_KEY {
-        rd_key: [0u32; 4 * (MAX_ROUNDS + 1)],
+        rd_key: [[0u32; 4]; MAX_ROUNDS + 1],
         rounds: 0,
     };
     // SAFETY:
