@@ -12,6 +12,8 @@
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+mod aes_nohw;
+
 use super::{nonce::Nonce, quic::Sample};
 use crate::{
     bits::BitLength,
@@ -203,9 +205,7 @@ impl Key {
 
             // SAFETY: `aes_nohw_set_encrypt_key` satisfies the `set_encrypt_key!`
             // contract.
-            Implementation::NOHW => unsafe {
-                set_encrypt_key!(aes_nohw_set_encrypt_key, bytes, &mut key, cpu_features)?;
-            },
+            Implementation::NOHW => aes_nohw::set_encrypt_key(&mut key, bytes),
         };
 
         Ok(Self { inner: key })
