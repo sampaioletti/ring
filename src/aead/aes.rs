@@ -331,16 +331,7 @@ impl Key {
             //    above, as required by `aes_nohw_ctr32_encrypt_blocks`.
             //  * `aes_nohw_ctr32_encrypt_blocks` satisfies the contract for
             //    `ctr32_encrypt_blocks`.
-            Implementation::NOHW => unsafe {
-                ctr32_encrypt_blocks!(
-                    aes_nohw_ctr32_encrypt_blocks,
-                    in_out,
-                    src,
-                    &self.inner,
-                    ctr,
-                    cpu_features
-                )
-            },
+            Implementation::NOHW => aes_nohw::ctr32_encrypt_within(&self.inner, in_out, src, ctr),
         }
     }
 
@@ -402,6 +393,10 @@ impl Counter {
         let old_value: u32 = u32::from_be_bytes([*c0, *c1, *c2, *c3]);
         let new_value = old_value + increment_by;
         [*c0, *c1, *c2, *c3] = u32::to_be_bytes(new_value);
+    }
+
+    pub(super) fn as_bytes_less_safe(&self) -> [u8; 16] {
+        self.0
     }
 }
 

@@ -13,15 +13,31 @@
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use super::{KeyBytes, AES_KEY, BLOCK_LEN, MAX_ROUNDS};
-use crate::{c, constant_time, polyfill::usize_from_u32};
-use core::{array, mem::MaybeUninit};
+use super::{Counter, KeyBytes, AES_KEY, BLOCK_LEN, MAX_ROUNDS};
+use crate::{
+    c, constant_time,
+    polyfill::{self, usize_from_u32, ArraySplitMap as _},
+};
+use core::{array, mem::MaybeUninit, ops::RangeFrom};
 
 type Word = constant_time::Word;
 const WORD_SIZE: usize = core::mem::size_of::<Word>();
 const BATCH_SIZE: usize = WORD_SIZE / 2;
+#[allow(clippy::cast_possible_truncation)]
+const BATCH_SIZE_U32: u32 = BATCH_SIZE as u32;
 
 const BLOCK_WORDS: usize = 16 / WORD_SIZE;
+
+fn compact_block(input: &[u8; 16]) -> [Word; BLOCK_WORDS] {
+    prefixed_extern! {
+        fn aes_nohw_compact_block(out: *mut [Word; BLOCK_WORDS], input: &[u8; 16]);
+    }
+    let mut block = MaybeUninit::uninit();
+    unsafe {
+        aes_nohw_compact_block(block.as_mut_ptr(), input);
+        block.assume_init()
+    }
+}
 
 // An AES_NOHW_BATCH stores |AES_NOHW_BATCH_SIZE| blocks. Unless otherwise
 // specified, it is in bitsliced form.
@@ -34,14 +50,15 @@ impl Batch {
     // aes_nohw_to_batch initializes |out| with the |num_blocks| blocks from |in|.
     // |num_blocks| must be at most |AES_NOHW_BATCH|.
     fn from_bytes(input: &[[u8; BLOCK_LEN]]) -> Self {
-        prefixed_extern! {
-            fn aes_nohw_to_batch(out: *mut Batch, input: *const u8, num_blocks: c::size_t);
-        }
-        let mut r = MaybeUninit::uninit();
-        unsafe {
-            aes_nohw_to_batch(r.as_mut_ptr(), input.as_ptr().cast::<u8>(), input.len());
-            r.assume_init()
-        }
+        let mut r = Self {
+            w: Default::default(),
+        };
+        input.iter().enumerate().for_each(|(i, input)| {
+            let block = compact_block(input);
+            r.set(&block, i);
+        });
+        r.transpose();
+        r
     }
 
     // aes_nohw_batch_set sets the |i|th block of |batch| to |in|. |batch| is in
@@ -53,32 +70,23 @@ impl Batch {
         unsafe { aes_nohw_batch_set(self, input, i) }
     }
 
-    // aes_nohw_transpose converts |batch| to and from bitsliced form. It divides
-    // the 8 × word_size bits into AES_NOHW_BATCH_SIZE × AES_NOHW_BATCH_SIZE squares
-    // and transposes each square.
+    fn encrypt(mut self, key: &Schedule, rounds: usize, out: &mut [[u8; BLOCK_LEN]]) {
+        assert!(out.len() <= BATCH_SIZE);
+        prefixed_extern! {
+            fn aes_nohw_encrypt_batch(key: &Schedule, num_rounds: usize, batch: &mut Batch);
+            fn aes_nohw_from_batch(out: *mut [u8; BLOCK_LEN], num_blocks: c::size_t, batch: &Batch);
+        }
+        unsafe {
+            aes_nohw_encrypt_batch(key, rounds, &mut self);
+            aes_nohw_from_batch(out.as_mut_ptr(), out.len(), &self);
+        }
+    }
+
     fn transpose(&mut self) {
         prefixed_extern! {
             fn aes_nohw_transpose(batch: &mut Batch);
         }
-        unsafe {
-            aes_nohw_transpose(self);
-        }
-    }
-
-    // aes_nohw_to_batch writes the first |num_blocks| blocks in |batch| to |out|.
-    // |num_blocks| must be at most |AES_NOHW_BATCH|.
-    fn into_bytes(self, out: &mut [[u8; BLOCK_LEN]]) {
-        prefixed_extern! {
-            fn aes_nohw_from_batch(out: *mut u8, num_blocks: c::size_t, batch: &Batch);
-        }
-        unsafe { aes_nohw_from_batch(out.as_mut_ptr().cast::<u8>(), out.len(), &self) }
-    }
-
-    fn encrypt(&mut self, key: &Schedule, num_rounds: usize) {
-        prefixed_extern! {
-            fn aes_nohw_encrypt_batch(key: &Schedule, num_rounds: usize, batch: &mut Batch);
-        }
-        unsafe { aes_nohw_encrypt_batch(key, num_rounds, self) }
+        unsafe { aes_nohw_transpose(self) }
     }
 }
 
@@ -125,7 +133,51 @@ pub(super) fn set_encrypt_key(key: &mut AES_KEY, bytes: KeyBytes) {
 
 pub(super) fn encrypt_block(key: &AES_KEY, in_out: &mut [u8; BLOCK_LEN]) {
     let sched = Schedule::expand_round_keys(key);
-    let mut batch = Batch::from_bytes(core::slice::from_ref(in_out));
-    batch.encrypt(&sched, usize_from_u32(key.rounds));
-    batch.into_bytes(core::slice::from_mut(in_out));
+    let batch = Batch::from_bytes(core::slice::from_ref(in_out));
+    batch.encrypt(&sched, usize_from_u32(key.rounds), array::from_mut(in_out));
+}
+
+pub(super) fn ctr32_encrypt_within(
+    key: &AES_KEY,
+    mut in_out: &mut [u8],
+    src: RangeFrom<usize>,
+    ctr: &mut Counter,
+) {
+    let (input, leftover): (&[[u8; BLOCK_LEN]], _) =
+        polyfill::slice::as_chunks(&in_out[src.clone()]);
+    debug_assert_eq!(leftover.len(), 0);
+    if input.is_empty() {
+        return;
+    }
+    let blocks_u32 = u32::try_from(input.len()).unwrap();
+
+    let sched = Schedule::expand_round_keys(key);
+
+    let initial_ctr = ctr.as_bytes_less_safe();
+    ctr.increment_by_less_safe(blocks_u32);
+
+    let mut ivs = [initial_ctr; BATCH_SIZE];
+    let mut enc_ctrs = [[0u8; 16]; BATCH_SIZE];
+    let initial_ctr: [[u8; 4]; 4] = initial_ctr.array_split_map(|x| x);
+    let mut ctr = u32::from_be_bytes(initial_ctr[3]);
+
+    for _ in (0..).step_by(BATCH_SIZE) {
+        (0u32..).zip(ivs.iter_mut()).for_each(|(i, iv)| {
+            iv[12..].copy_from_slice(&u32::to_be_bytes(ctr + i));
+        });
+
+        let (input, leftover): (&[[u8; BLOCK_LEN]], _) =
+            polyfill::slice::as_chunks(&in_out[src.clone()]);
+        debug_assert_eq!(leftover.len(), 0);
+        let todo = core::cmp::min(ivs.len(), input.len());
+        let batch = Batch::from_bytes(&ivs[..todo]);
+        batch.encrypt(&sched, usize_from_u32(key.rounds), &mut enc_ctrs[..todo]);
+        constant_time::xor_within_chunked_at_start(in_out, src.clone(), &enc_ctrs[..todo]);
+
+        if todo < BATCH_SIZE {
+            break;
+        }
+        in_out = &mut in_out[(BLOCK_LEN * BATCH_SIZE)..];
+        ctr += BATCH_SIZE_U32;
+    }
 }

@@ -14,7 +14,8 @@
 
 //! Constant-time operations.
 
-use crate::{c, error};
+use crate::{c, error, polyfill};
+use core::{cmp, ops::RangeFrom};
 
 #[cfg(target_pointer_width = "64")]
 pub(crate) type Word = u64;
@@ -56,6 +57,38 @@ pub(crate) fn xor_assign_at_start_bytes<'a>(
     b: impl IntoIterator<Item = &'a u8>,
 ) {
     a.into_iter().zip(b).for_each(|(a, b)| *a ^= *b);
+}
+
+#[inline(always)]
+pub(crate) fn xor_within_chunked_at_start<const INNER: usize>(
+    in_out: &mut [u8],
+    src: RangeFrom<usize>,
+    b: &[[u8; INNER]],
+) {
+    let (mut input, num_blocks) = {
+        let input = match in_out.get(src.clone()) {
+            Some(input) => input,
+            None => {
+                panic!()
+            }
+        };
+
+        let (input, _): (&[[u8; INNER]], _) = polyfill::slice::as_chunks(input);
+        let num_blocks = cmp::min(input.len(), b.len());
+        (input.as_ptr(), num_blocks)
+    };
+    let (output, _): (&mut [[u8; INNER]], _) = polyfill::slice::as_chunks_mut(in_out);
+    let output = &mut output[..num_blocks];
+
+    for (b, out) in (b[..num_blocks].iter()).zip(output) {
+        let a = unsafe { core::ptr::read(input) };
+        out.iter_mut()
+            .zip(a.iter().zip(b))
+            .for_each(|(out, (a, b))| {
+                *out = *a ^ *b;
+            });
+        input = unsafe { input.add(1) };
+    }
 }
 
 #[cfg(test)]
