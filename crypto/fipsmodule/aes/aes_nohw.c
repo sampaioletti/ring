@@ -356,33 +356,6 @@ static inline void aes_nohw_swap_bits(aes_word_t *a, aes_word_t *b,
   *b ^= swap;
 }
 
-// aes_nohw_transpose converts |batch| to and from bitsliced form. It divides
-// the 8 × word_size bits into AES_NOHW_BATCH_SIZE × AES_NOHW_BATCH_SIZE squares
-// and transposes each square.
-void aes_nohw_transpose(AES_NOHW_BATCH *batch) {
-  // Swap bits with index 0 and 1 mod 2 (0x55 = 0b01010101).
-  aes_nohw_swap_bits(&batch->w[0], &batch->w[1], 0x55555555, 1);
-  aes_nohw_swap_bits(&batch->w[2], &batch->w[3], 0x55555555, 1);
-  aes_nohw_swap_bits(&batch->w[4], &batch->w[5], 0x55555555, 1);
-  aes_nohw_swap_bits(&batch->w[6], &batch->w[7], 0x55555555, 1);
-
-#if AES_NOHW_BATCH_SIZE >= 4
-  // Swap bits with index 0-1 and 2-3 mod 4 (0x33 = 0b00110011).
-  aes_nohw_swap_bits(&batch->w[0], &batch->w[2], 0x33333333, 2);
-  aes_nohw_swap_bits(&batch->w[1], &batch->w[3], 0x33333333, 2);
-  aes_nohw_swap_bits(&batch->w[4], &batch->w[6], 0x33333333, 2);
-  aes_nohw_swap_bits(&batch->w[5], &batch->w[7], 0x33333333, 2);
-#endif
-
-#if AES_NOHW_BATCH_SIZE >= 8
-  // Swap bits with index 0-3 and 4-7 mod 8 (0x0f = 0b00001111).
-  aes_nohw_swap_bits(&batch->w[0], &batch->w[4], 0x0f0f0f0f, 4);
-  aes_nohw_swap_bits(&batch->w[1], &batch->w[5], 0x0f0f0f0f, 4);
-  aes_nohw_swap_bits(&batch->w[2], &batch->w[6], 0x0f0f0f0f, 4);
-  aes_nohw_swap_bits(&batch->w[3], &batch->w[7], 0x0f0f0f0f, 4);
-#endif
-}
-
 // AES round steps.
 
 void aes_nohw_sub_bytes(AES_NOHW_BATCH *batch) {
