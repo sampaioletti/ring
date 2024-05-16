@@ -81,6 +81,25 @@ impl Batch {
         unsafe { aes_nohw_batch_set(self, input, i) }
     }
 
+    fn get(&self, i: usize) -> [Word; BLOCK_WORDS] {
+        assert!(i < self.w.len());
+        prefixed_extern! {
+            fn aes_nohw_batch_get(batch: &Batch, out: *mut [Word; BLOCK_WORDS], i: c::size_t);
+        }
+        let mut out = MaybeUninit::uninit();
+        unsafe {
+            aes_nohw_batch_get(self, out.as_mut_ptr(), i);
+            out.assume_init()
+        }
+    }
+
+    fn sub_bytes(&mut self) {
+        prefixed_extern! {
+            fn aes_nohw_sub_bytes(batch: &mut Batch);
+        }
+        unsafe { aes_nohw_sub_bytes(self) };
+    }
+
     fn encrypt(mut self, key: &Schedule, rounds: usize, out: &mut [[u8; BLOCK_LEN]]) {
         assert!(out.len() <= BATCH_SIZE);
         prefixed_extern! {
@@ -238,14 +257,14 @@ fn derive_round_key(
 }
 
 fn sub_block(input: &[Word; BLOCK_WORDS]) -> [Word; BLOCK_WORDS] {
-    prefixed_extern! {
-        fn aes_nohw_sub_block(out: *mut [Word; BLOCK_WORDS], input: &[Word; BLOCK_WORDS]);
-    }
-    let mut r = MaybeUninit::uninit();
-    unsafe {
-        aes_nohw_sub_block(r.as_mut_ptr(), input);
-        r.assume_init()
-    }
+    let mut batch = Batch {
+        w: Default::default(),
+    };
+    batch.set(input, 0);
+    batch.transpose();
+    batch.sub_bytes();
+    batch.transpose();
+    batch.get(0)
 }
 
 pub(super) fn ctr32_encrypt_within(
