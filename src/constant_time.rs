@@ -59,6 +59,15 @@ pub(crate) fn xor_assign_at_start_bytes<'a>(
     a.into_iter().zip(b).for_each(|(a, b)| *a ^= *b);
 }
 
+/// XORs the first N words of `b` into `a`, where N is
+/// `core::cmp::min(a.len(), b.len())`.
+#[inline(always)]
+pub(crate) fn xor_assign_at_start<'a>(
+    a: impl IntoIterator<Item = &'a mut Word>,
+    b: impl IntoIterator<Item = &'a Word>,
+) {
+    a.into_iter().zip(b).for_each(|(a, b)| *a ^= *b);
+}
 #[inline(always)]
 pub(crate) fn xor_within_chunked_at_start<const INNER: usize>(
     in_out: &mut [u8],
