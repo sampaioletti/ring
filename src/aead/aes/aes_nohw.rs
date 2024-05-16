@@ -15,7 +15,7 @@
 
 use super::{Counter, KeyBytes, AES_KEY, BLOCK_LEN, MAX_ROUNDS};
 use crate::{
-    c, constant_time,
+    constant_time,
     polyfill::{self, usize_from_u32, ArraySplitMap as _},
 };
 use core::{array, mem::MaybeUninit, ops::RangeFrom};
@@ -90,16 +90,18 @@ impl Batch {
         unsafe { aes_nohw_batch_set(self, input, i) }
     }
 
+    // aes_nohw_batch_get writes the |i|th block of |batch| to |out|. |batch| is in
+    // compact form.
     fn get(&self, i: usize) -> [Word; BLOCK_WORDS] {
         assert!(i < self.w.len());
-        prefixed_extern! {
-            fn aes_nohw_batch_get(batch: &Batch, out: *mut [Word; BLOCK_WORDS], i: c::size_t);
-        }
-        let mut out = MaybeUninit::uninit();
-        unsafe {
-            aes_nohw_batch_get(self, out.as_mut_ptr(), i);
-            out.assume_init()
-        }
+        array::from_fn(|j| {
+            #[cfg(target_pointer_width = "64")]
+            const STRIDE: usize = 4;
+            #[cfg(target_pointer_width = "32")]
+            const STRIDE: usize = 2;
+
+            self.w[i + (j * STRIDE)]
+        })
     }
 
     fn sub_bytes(&mut self) {
