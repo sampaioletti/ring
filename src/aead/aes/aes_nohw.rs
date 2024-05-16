@@ -28,6 +28,16 @@ const BATCH_SIZE_U32: u32 = BATCH_SIZE as u32;
 
 const BLOCK_WORDS: usize = 16 / WORD_SIZE;
 
+#[inline(always)]
+fn shift_left<const I: u32>(a: Word) -> Word {
+    a << (I * BATCH_SIZE_U32)
+}
+
+#[inline(always)]
+fn shift_right<const I: u32>(a: Word) -> Word {
+    a >> (I * BATCH_SIZE_U32)
+}
+
 fn compact_block(input: &[u8; 16]) -> [Word; BLOCK_WORDS] {
     prefixed_extern! {
         fn aes_nohw_compact_block(out: *mut [Word; BLOCK_WORDS], input: &[u8; 16]);
@@ -64,6 +74,7 @@ impl Batch {
     // aes_nohw_batch_set sets the |i|th block of |batch| to |in|. |batch| is in
     // compact form.
     fn set(&mut self, input: &[Word; BLOCK_WORDS], i: usize) {
+        assert!(i < self.w.len());
         prefixed_extern! {
             fn aes_nohw_batch_set(batch: *mut Batch, input: &[Word; BLOCK_WORDS], i: usize);
         }
@@ -87,6 +98,19 @@ impl Batch {
             fn aes_nohw_transpose(batch: &mut Batch);
         }
         unsafe { aes_nohw_transpose(self) }
+    }
+}
+
+#[inline(always)]
+fn rotate_rows_down(v: Word) -> Word {
+    #[cfg(target_pointer_width = "64")]
+    {
+        ((v >> 4) & 0x0fff0fff0fff0fff) | ((v << 12) & 0xf000f000f000f000)
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    {
+        ((v >> 2) & 0x3f3f3f3f) | ((v << 6) & 0xc0c0c0c0)
     }
 }
 
@@ -120,21 +144,108 @@ impl Schedule {
     }
 }
 
+static RCON: [u8; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
+
+// aes_nohw_rcon_slice returns the |i|th group of |AES_NOHW_BATCH_SIZE| bits in
+// |rcon|, stored in a |aes_word_t|.
+#[inline(always)]
+fn rcon_slice(rcon: u8, i: usize) -> Word {
+    let rcon = (rcon >> (i * BATCH_SIZE)) & ((1 << BATCH_SIZE) - 1);
+    rcon.into()
+}
+
 pub(super) fn set_encrypt_key(key: &mut AES_KEY, bytes: KeyBytes) {
-    prefixed_extern! {
-        fn aes_nohw_setup_key_128(key: *mut AES_KEY, input: &[u8; 128 / 8]);
-        fn aes_nohw_setup_key_256(key: *mut AES_KEY, input: &[u8; 256 / 8]);
-    }
     match bytes {
-        KeyBytes::AES_128(bytes) => unsafe { aes_nohw_setup_key_128(key, bytes) },
-        KeyBytes::AES_256(bytes) => unsafe { aes_nohw_setup_key_256(key, bytes) },
+        KeyBytes::AES_128(bytes) => setup_key_128(key, bytes),
+        KeyBytes::AES_256(bytes) => setup_key_256(key, bytes),
     }
+}
+
+fn setup_key_128(key: &mut AES_KEY, input: &[u8; 128 / 8]) {
+    key.rounds = 10;
+
+    let mut block = compact_block(input);
+    key.rd_key[0] = unsafe { core::mem::transmute(block) };
+
+    key.rd_key[1..=10]
+        .iter_mut()
+        .zip(RCON)
+        .for_each(|(rd_key, rcon)| {
+            let sub = sub_block(&block);
+            *rd_key = derive_round_key(&mut block, sub, rcon);
+        });
 }
 
 pub(super) fn encrypt_block(key: &AES_KEY, in_out: &mut [u8; BLOCK_LEN]) {
     let sched = Schedule::expand_round_keys(key);
     let batch = Batch::from_bytes(core::slice::from_ref(in_out));
     batch.encrypt(&sched, usize_from_u32(key.rounds), array::from_mut(in_out));
+}
+
+fn setup_key_256(key: &mut AES_KEY, input: &[u8; 32]) {
+    key.rounds = 14;
+
+    // Each key schedule iteration produces two round keys.
+    let (input, _) = polyfill::slice::as_chunks(input);
+    let mut block1 = compact_block(&input[0]);
+    key.rd_key[0] = unsafe { core::mem::transmute(block1) };
+    let mut block2 = compact_block(&input[1]);
+    key.rd_key[1] = unsafe { core::mem::transmute(block2) };
+
+    key.rd_key[2..=14]
+        .chunks_mut(2)
+        .zip(RCON)
+        .for_each(|(rd_key_pair, rcon)| {
+            let sub = sub_block(&block2);
+            rd_key_pair[0] = derive_round_key(&mut block1, sub, rcon);
+
+            if let Some(rd_key_2) = rd_key_pair.get_mut(1) {
+                let sub = sub_block(&block1);
+                block2.iter_mut().zip(sub).for_each(|(w, sub)| {
+                    // Incorporate the transformed word into the first word.
+                    *w ^= shift_right::<12>(sub);
+                    // Propagate to the remaining words.
+                    let v = *w;
+                    *w ^= shift_left::<4>(v);
+                    *w ^= shift_left::<8>(v);
+                    *w ^= shift_left::<12>(v);
+                });
+                *rd_key_2 = unsafe { core::mem::transmute(block2) };
+            }
+        });
+}
+
+fn derive_round_key(
+    block: &mut [Word; BLOCK_WORDS],
+    sub: [Word; BLOCK_WORDS],
+    rcon: u8,
+) -> [u32; 4] {
+    block
+        .iter_mut()
+        .zip(sub)
+        .enumerate()
+        .for_each(|(j, (w, sub))| {
+            // Incorporate |rcon| and the transformed word into the first word.
+            *w ^= rcon_slice(rcon, j);
+            *w ^= shift_right::<12>(rotate_rows_down(sub));
+            // Propagate to the remaining words.
+            let v = *w;
+            *w ^= shift_left::<4>(v);
+            *w ^= shift_left::<8>(v);
+            *w ^= shift_left::<12>(v);
+        });
+    unsafe { core::mem::transmute(*block) }
+}
+
+fn sub_block(input: &[Word; BLOCK_WORDS]) -> [Word; BLOCK_WORDS] {
+    prefixed_extern! {
+        fn aes_nohw_sub_block(out: *mut [Word; BLOCK_WORDS], input: &[Word; BLOCK_WORDS]);
+    }
+    let mut r = MaybeUninit::uninit();
+    unsafe {
+        aes_nohw_sub_block(r.as_mut_ptr(), input);
+        r.assume_init()
+    }
 }
 
 pub(super) fn ctr32_encrypt_within(
