@@ -51,7 +51,7 @@ pub(crate) fn xor<const N: usize>(mut a: [u8; N], b: [u8; N]) -> [u8; N] {
 /// XORs the first N bytes of `b` into `a`, where N is
 /// `core::cmp::min(a.len(), b.len())`.
 #[inline(always)]
-pub(crate) fn xor_assign_at_start<'a>(
+pub(crate) fn xor_assign_at_start_bytes<'a>(
     a: impl IntoIterator<Item = &'a mut u8>,
     b: impl IntoIterator<Item = &'a u8>,
 ) {
