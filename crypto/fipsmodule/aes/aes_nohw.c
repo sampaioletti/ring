@@ -307,23 +307,6 @@ void aes_nohw_uncompact_block(
 #endif
 }
 
-// aes_nohw_swap_bits is a variation on a delta swap. It swaps the bits in
-// |*a & (mask << shift)| with the bits in |*b & mask|. |mask| and
-// |mask << shift| must not overlap. |mask| is specified as a |uint32_t|, but it
-// is repeated to the full width of |aes_word_t|.
-static inline void aes_nohw_swap_bits(aes_word_t *a, aes_word_t *b,
-                                      uint32_t mask, aes_word_t shift) {
-#if defined(OPENSSL_64_BIT)
-  aes_word_t mask_w = (((uint64_t)mask) << 32) | mask;
-#else
-  aes_word_t mask_w = mask;
-#endif
-  // This is a variation on a delta swap.
-  aes_word_t swap = ((*a >> shift) ^ *b) & mask_w;
-  *a ^= swap << shift;
-  *b ^= swap;
-}
-
 // AES round steps.
 
 void aes_nohw_sub_bytes(AES_NOHW_BATCH *batch) {
