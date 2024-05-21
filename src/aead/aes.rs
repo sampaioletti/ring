@@ -353,7 +353,6 @@ impl Key {
     }
 }
 
-// Keep this in sync with AES_KEY in aes.h.
 #[repr(C)]
 #[derive(Clone)]
 pub(super) struct AES_KEY {
@@ -361,7 +360,6 @@ pub(super) struct AES_KEY {
     pub rounds: c::uint,
 }
 
-// Keep this in sync with `AES_MAXNR` in aes.h.
 const MAX_ROUNDS: usize = 14;
 
 pub const AES_128_KEY_LEN: usize = 128 / 8;

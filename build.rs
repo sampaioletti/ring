@@ -53,7 +53,6 @@ const WASM32: &str = "wasm32";
 #[rustfmt::skip]
 const RING_SRCS: &[(&[&str], &str)] = &[
     (&[], "crypto/curve25519/curve25519.c"),
-    (&[], "crypto/fipsmodule/aes/aes_nohw.c"),
     (&[], "crypto/fipsmodule/bn/montgomery.c"),
     (&[], "crypto/fipsmodule/bn/montgomery_inv.c"),
     (&[], "crypto/fipsmodule/ec/ecp_nistz.c"),
@@ -869,10 +868,6 @@ fn prefix_all_symbols(pp: char, prefix_prefix: &str, prefix: &str) -> String {
         "aes_hw_ctr32_encrypt_blocks",
         "aes_hw_encrypt",
         "aes_hw_set_encrypt_key",
-        "aes_nohw_sub_bytes",
-        "aes_nohw_to_batch",
-        "aes_nohw_mix_columns",
-        "aes_nohw_shift_rows",
         "aesni_gcm_decrypt",
         "aesni_gcm_encrypt",
         "bn_from_montgomery_in_place",
