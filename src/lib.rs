@@ -94,7 +94,13 @@ mod debug;
 mod prefixed;
 
 #[macro_use]
-pub mod test;
+mod testutil;
+
+// TODO(SemVer): Remove this, making `testutil` private.
+#[deprecated(note = "The `test` submodule will be removed.")]
+pub mod test {
+    pub use super::testutil::*;
+}
 
 #[macro_use]
 mod arithmetic;
