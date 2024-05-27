@@ -19,8 +19,8 @@
 //
 // This file may be included in C, C++, and assembler and must be compatible
 // with each environment. It is separated out only to share code between
-// <ring-core/base.h> and <ring-core/asm_base.h>. Prefer to include those headers
-// instead.
+// <ring-core/base.h> and <ring-core/asm_base.h>. Prefer to include those
+// headers instead.
 
 #if defined(__x86_64) || defined(_M_AMD64) || defined(_M_X64)
 #define OPENSSL_64_BIT
@@ -40,13 +40,16 @@
 #define OPENSSL_64_BIT
 #elif defined(__wasm__)
 #define OPENSSL_32_BIT
-// All of following architectures are only supported when `__BYTE_ORDER__` can be used to detect
-// endianness (in crypto/internal.h).
+// All of following architectures are only supported when `__BYTE_ORDER__` can
+// be used to detect endianness (in crypto/internal.h).
 #elif !defined(__BYTE_ORDER__)
 #error "Cannot determine endianness because __BYTE_ORDER__ is not defined"
-// Targets are assumed to be little-endian unless __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__.
-#elif !(defined(__ORDER_LITTLE_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)) && \
-      !(defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))
+// Targets are assumed to be little-endian unless __BYTE_ORDER__ ==
+// __ORDER_BIG_ENDIAN__.
+#elif !(defined(__ORDER_LITTLE_ENDIAN__) &&             \
+        (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)) && \
+    !(defined(__ORDER_BIG_ENDIAN__) &&                  \
+      (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))
 #error "Unsupported endianness"
 #elif defined(__MIPSEL__) && !defined(__LP64__)
 #define OPENSSL_32_BIT
@@ -60,6 +63,8 @@
 #define OPENSSL_32_BIT
 #elif defined(__s390x__)
 #define OPENSSL_64_BIT
+#elif defined(__XTENSA__)
+#define OPENSSL_32_BIT
 #else
 #error "Unknown target CPU"
 #endif

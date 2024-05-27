@@ -144,6 +144,7 @@ fn cpp_flags(compiler: &cc::Tool) -> &'static [&'static str] {
             "-Wstrict-prototypes",
             "-Wundef",
             "-Wuninitialized",
+            "-mlongcalls",
         ];
         NON_MSVC_FLAGS
     } else {

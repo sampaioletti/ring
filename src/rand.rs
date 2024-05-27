@@ -126,6 +126,7 @@ impl crate::sealed::Sealed for SystemRandom {}
     target_os = "aix",
     target_os = "android",
     target_os = "dragonfly",
+    target_os = "espidf",
     target_os = "freebsd",
     target_os = "haiku",
     target_os = "hermit",
